@@ -1,0 +1,204 @@
+<h1 class="module"><span class="mtag">MODULE 14 &middot; PART A</span>INTERVIEW AND VIVA BANK: LEVELS 1&ndash;3</h1>
+
+<p>Each answer follows the same rhythm: a short answer you can say in one breath, then the reasoning, then the ProofPay instance. Say the short answer first even in a viva — examiners grade clarity, then probe.</p>
+
+<h2>14.1 Level 1 &mdash; foundations</h2>
+
+<div class="qa"><p class="q"><span class="qn">Q1.</span> What is a blockchain?</p>
+<div class="a"><p><b>Short:</b> a database replicated across independent computers where changes are signed transactions grouped into hash-linked blocks. <b>Reasoning:</b> replication plus agreed validity rules means no single party can rewrite history unnoticed. <b>In ProofPay:</b> the escrow's state, every deposit and every settlement live in such a ledger, so neither buyer nor seller can alter the record of who was paid.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q2.</span> What is Ethereum?</p>
+<div class="a"><p><b>Short:</b> a blockchain whose nodes also run a virtual machine that executes programs called smart contracts. <b>Reasoning:</b> Bitcoin stores value transfers; Ethereum stores arbitrary state transitions, which is what makes conditional escrow possible. <b>In ProofPay:</b> the payment rules are code, not policy.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q3.</span> What is a smart contract?</p>
+<div class="a"><p><b>Short:</b> a program deployed to an address on the blockchain, with persistent public storage, executed deterministically by every node. <b>Reasoning:</b> determinism is what allows consensus; persistence is what makes it a record; no upgrade path is what makes it credible. <b>In ProofPay:</b> <span class="mono">ProofPayEscrow</span> holds funds and can only pay out through two functions.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q4.</span> What is Solidity?</p>
+<div class="a"><p><b>Short:</b> the main high-level language for EVM contracts, compiling to bytecode. <b>Reasoning:</b> it adds contract-specific constructs — modifiers, events, custom errors, storage mappings — on top of a JavaScript-like syntax. <b>In ProofPay:</b> all three contracts are Solidity 0.8.28, with OpenZeppelin for standard behaviour.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q5.</span> What is MetaMask?</p>
+<div class="a"><p><b>Short:</b> a browser extension wallet that stores keys, signs transactions, and injects an EIP-1193 provider at <span class="mono">window.ethereum</span>. <b>Reasoning:</b> it separates key custody from the application, so a website can request signatures without ever seeing a key. <b>In ProofPay:</b> every write — approve, createEscrow, processReport — is signed there.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q6.</span> What is an ERC-20 token?</p>
+<div class="a"><p><b>Short:</b> a standard interface for fungible tokens: balances, transfers, allowances and two events. <b>Reasoning:</b> standardisation means wallets and contracts can handle any token without custom code. <b>In ProofPay:</b> pUSD implements it, so the escrow can use <span class="mono">SafeERC20</span> and treat it like any compliant asset.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q7.</span> What is gas?</p>
+<div class="a"><p><b>Short:</b> a unit measuring computational work, paid for in the chain's native currency. <b>Reasoning:</b> it prices storage and computation, preventing infinite loops and spam. <b>In ProofPay:</b> <span class="mono">createEscrow</span> costs about 156,000 gas and <span class="mono">processReport</span> about 122,000; the amounts were read from receipts, not estimated.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q8.</span> What is an escrow?</p>
+<div class="a"><p><b>Short:</b> a neutral hold on funds until an agreed condition is met. <b>Reasoning:</b> it removes the "who goes first" problem by making neither party able to spend prematurely. <b>In ProofPay:</b> the contract is the neutral holder, and the condition is an oracle report about delivery.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q9.</span> What is a transaction hash?</p>
+<div class="a"><p><b>Short:</b> the Keccak-256 digest of a signed transaction, used as its unique identifier. <b>Reasoning:</b> it is deterministic, so anyone can look it up on any node and see the same receipt. <b>In ProofPay:</b> the refund hash <span class="mono">0x835890…a5288</span> identifies the block-29 settlement.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q10.</span> What is a block number?</p>
+<div class="a"><p><b>Short:</b> the position of a block in the chain. <b>Reasoning:</b> ordering is what gives finality; a receipt's block number is when its effects became part of history. <b>In ProofPay:</b> settlements at blocks 24, 29 and 30, each exactly one higher than the last, which also proves no hidden extra transaction.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q11.</span> What is a nonce?</p>
+<div class="a"><p><b>Short:</b> a per-account counter that orders that account's transactions and prevents replay. <b>Reasoning:</b> a transaction with nonce n cannot be mined before n−1, and cannot be mined twice. <b>In ProofPay:</b> a stuck nonce is the usual cause of a "pending forever" transaction on the local node.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q12.</span> What is a chain ID?</p>
+<div class="a"><p><b>Short:</b> the network identifier that is signed into every transaction. <b>Reasoning:</b> it prevents a transaction signed for one chain from being replayed on another. <b>In ProofPay:</b> 31337 for Hardhat Local, and the UI refuses writes when the wallet reports anything else.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q13.</span> What is an RPC endpoint?</p>
+<div class="a"><p><b>Short:</b> an HTTP (or WebSocket) URL that a client uses to talk to a node. <b>Reasoning:</b> it exposes methods such as <span class="mono">eth_call</span>, <span class="mono">eth_sendTransaction</span> and <span class="mono">eth_getLogs</span>. <b>In ProofPay:</b> <span class="mono">http://127.0.0.1:8545</span> is used by the wallet, the frontend, the backend verifier, the workflow and the bridge.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q14.</span> What is the EVM?</p>
+<div class="a"><p><b>Short:</b> the deterministic virtual machine that executes contract bytecode. <b>Reasoning:</b> determinism plus metered execution (gas) is what makes contract results agree across nodes. <b>In ProofPay:</b> the escrow's validations and the token's balance updates are EVM execution.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q15.</span> What is the difference between an address and an account?</p>
+<div class="a"><p><b>Short:</b> an address is the 20-byte identifier; an account is the thing it identifies, with a balance and possibly code and storage. <b>Reasoning:</b> every address is an account, but only EOAs can initiate transactions. <b>In ProofPay:</b> the receiver has an address, an account, code and two mappings, but no key — it can only act when called.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q16.</span> What is a private key, and who holds the project's?</p>
+<div class="a"><p><b>Short:</b> the 256-bit secret that signs transactions. <b>Reasoning:</b> possession is authority; there is no password reset. <b>In ProofPay:</b> no key is stored in the repository. The local Hardhat node holds test keys in memory and exposes the accounts as unlocked, so the bridge signs via <span class="mono">eth_sendTransaction</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q17.</span> What is a hash function and why Keccak-256?</p>
+<div class="a"><p><b>Short:</b> a one-way function mapping any input to a fixed 32-byte fingerprint, with avalanche behaviour. <b>Reasoning:</b> Ethereum uses Keccak-256 for block linkage, addresses, selectors and event topics, so using it keeps your code consistent with the platform. <b>In ProofPay:</b> order IDs, tracking hashes and report IDs are all Keccak-256.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q18.</span> What is a digital signature?</p>
+<div class="a"><p><b>Short:</b> a proof, verifiable with a public key, that the holder of the matching private key approved specific bytes. <b>Reasoning:</b> signatures bind authorisation to content, so changing any field invalidates them. <b>In ProofPay:</b> that is why editing a request in the browser cannot move funds.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q19.</span> What does immutability actually mean here?</p>
+<div class="a"><p><b>Short:</b> rewriting history requires redoing all later blocks faster than honest participants extend the chain. <b>Reasoning:</b> immutability is economic and social, not absolute. <b>In ProofPay:</b> strong on chain, absent on the local node — restarting Hardhat erases everything, so no mainnet-style guarantee is claimed.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q20.</span> Why is the blockchain public a privacy problem, and how did you handle it?</p>
+<div class="a"><p><b>Short:</b> every address, amount and call is visible forever. <b>Reasoning:</b> payment transparency is the feature; leaking shipping details is the risk. <b>In ProofPay:</b> the report stores <span class="mono">keccak256(trackingId)</span> rather than the tracking number, so settlements are auditable without publishing parcel identifiers.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q21.</span> What is a testnet, and did you use one?</p>
+<div class="a"><p><b>Short:</b> a chain with valueless currency for development. <b>Reasoning:</b> it lets you rehearse without risking assets while still being public. <b>In ProofPay:</b> no. The project runs entirely on Hardhat Local; a Sepolia network entry exists in the config but was never used, and the report says so.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q22.</span> What is a wallet, if it does not hold coins?</p>
+<div class="a"><p><b>Short:</b> software that holds keys and signs; the coins are ledger entries. <b>Reasoning:</b> restoring a seed phrase restores access, not data. <b>In ProofPay:</b> deleting the extension changes nothing on chain; the escrow still holds the pUSD.</p></div></div>
+
+<h2>14.2 Level 2 &mdash; mechanics</h2>
+
+<div class="qa"><p class="q"><span class="qn">Q23.</span> How does MetaMask communicate with React?</p>
+<div class="a"><p><b>Short:</b> through the injected EIP-1193 provider's <span class="mono">request()</span> method and its events. <b>Reasoning:</b> the provider is a transport, not a library, so any framework can use it. <b>In ProofPay:</b> <span class="mono">useWallet</span> calls <span class="mono">eth_requestAccounts</span>, <span class="mono">eth_chainId</span>, <span class="mono">eth_getBalance</span>, and subscribes to <span class="mono">accountsChanged</span> and <span class="mono">chainChanged</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q24.</span> What is EIP-1193?</p>
+<div class="a"><p><b>Short:</b> the standard describing the injected provider object and its request/response protocol. <b>Reasoning:</b> before it, each wallet invented its own API; after it, one code path works across wallets. <b>In ProofPay:</b> every chain interaction in the browser goes through it.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q25.</span> What is an ABI?</p>
+<div class="a"><p><b>Short:</b> a JSON description of a contract's functions, arguments, returns, events and errors. <b>Reasoning:</b> the EVM only sees bytes, so the ABI is how tooling encodes calls and decodes results. <b>In ProofPay:</b> the receiver's ABI has two functions in the frontend and seven entries in the bridge, including errors it decodes.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q26.</span> What is ABI encoding?</p>
+<div class="a"><p><b>Short:</b> the canonical byte layout for arguments: 32-byte words, offsets for dynamic types, lengths for strings and bytes. <b>Reasoning:</b> both sides must agree byte-for-byte or decoding fails. <b>In ProofPay:</b> the four-field report is 256 bytes, and its layout is why the receiver can decode it with one call.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q27.</span> What is a function selector?</p>
+<div class="a"><p><b>Short:</b> the first four bytes of <span class="mono">keccak256("name(types)")</span>, prefixed to calldata. <b>Reasoning:</b> it tells the contract which function to run without sending names. <b>In ProofPay:</b> the bridge's 388-byte transaction begins with the <span class="mono">processReport(bytes,bytes)</span> selector.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q28.</span> What is the difference between <span class="mono">call</span>, <span class="mono">staticcall</span> and <span class="mono">delegatecall</span>?</p>
+<div class="a"><p><b>Short:</b> <span class="mono">call</span> can change state, <span class="mono">staticcall</span> forbids it, and <span class="mono">delegatecall</span> runs another contract's code in the caller's storage. <b>Reasoning:</b> the distinction is what makes read-only RPC safe. <b>In ProofPay:</b> reads use <span class="mono">eth_call</span>, which is a static call; nothing in the project uses <span class="mono">delegatecall</span>, and no proxy pattern is used.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q29.</span> Why do you need <span class="mono">approve</span> before <span class="mono">transferFrom</span>?</p>
+<div class="a"><p><b>Short:</b> because a token contract will only debit an owner who has authorised that specific spender. <b>Reasoning:</b> without allowances, any contract you interact with could take everything. <b>In ProofPay:</b> transaction 1 sets <span class="mono">allowance[buyer][escrow]</span>; transaction 2 spends it inside <span class="mono">createEscrow</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q30.</span> Why does the allowance get consumed?</p>
+<div class="a"><p><b>Short:</b> ERC-20 decrements the allowance on every <span class="mono">transferFrom</span>. <b>Reasoning:</b> an allowance is a spending limit, not a permanent grant. <b>In ProofPay:</b> a second purchase needs a fresh approval, which is why the checkout always runs the approve step rather than assuming it is still valid.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q31.</span> What is ReentrancyGuard and why is it there?</p>
+<div class="a"><p><b>Short:</b> a modifier that sets a storage flag so a function cannot be re-entered before it finishes. <b>Reasoning:</b> external calls hand control to code you do not control. <b>In ProofPay:</b> <span class="mono">createEscrow</span> and both settlement functions are <span class="mono">nonReentrant</span>, and a test attempts the attack.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q32.</span> What is SafeERC20?</p>
+<div class="a"><p><b>Short:</b> a wrapper that checks the return value of token calls and reverts on failure. <b>Reasoning:</b> some tokens return <span class="mono">false</span> instead of reverting, so ignoring the return value can silently lose funds. <b>In ProofPay:</b> all escrow transfers use it.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q33.</span> What is an event, and can a contract read it?</p>
+<div class="a"><p><b>Short:</b> a log entry stored in the transaction receipt; contracts cannot read logs. <b>Reasoning:</b> logs are cheap, indexable, and for off-chain consumers. <b>In ProofPay:</b> <span class="mono">EscrowCreated</span> lets the frontend discover orders, but every value shown is re-read from storage.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q34.</span> What is a custom error, and why use it?</p>
+<div class="a"><p><b>Short:</b> a typed revert with optional arguments, defined with the <span class="mono">error</span> keyword. <b>Reasoning:</b> cheaper than strings and precisely testable. <b>In ProofPay:</b> the tests assert <span class="mono">revertedWithCustomError(token, "ERC20InsufficientBalance").withArgs(...)</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q35.</span> What is an oracle?</p>
+<div class="a"><p><b>Short:</b> a component that delivers external facts to a blockchain. <b>Reasoning:</b> contracts cannot fetch, so facts must be pushed in with evidence. <b>In ProofPay:</b> the CRE workflow is the oracle, and the receiver is the contract that decides whether to believe its report.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q36.</span> Why can't a smart contract call an API directly?</p>
+<div class="a"><p><b>Short:</b> because execution must be deterministic and identical on every node; HTTP is neither. <b>Reasoning:</b> one node getting a different response would fork consensus. <b>In ProofPay:</b> this constraint is the reason the whole oracle pipeline exists.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q37.</span> What is the oracle problem?</p>
+<div class="a"><p><b>Short:</b> how to get a trustworthy external fact into a system that cannot verify it. <b>Reasoning:</b> any oracle reintroduces a trust assumption; the design question is how to bound it. <b>In ProofPay:</b> bounded by authorisation, replay protection, one settlement per funded order and a documented trust boundary.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q38.</span> What is a DON?</p>
+<div class="a"><p><b>Short:</b> a decentralised oracle network: independent nodes that must agree before reporting. <b>Reasoning:</b> agreement removes the single-reporter assumption. <b>In ProofPay:</b> the code is written for it, but no DON is deployed, so this is future work, not a claim.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q39.</span> What is Chainlink CRE?</p>
+<div class="a"><p><b>Short:</b> a runtime for TypeScript workflows with triggers, HTTP and EVM capabilities, and signed reports for on-chain receivers. <b>Reasoning:</b> it packages the whole fetch-verify-decide-report loop. <b>In ProofPay:</b> it holds the only settlement decision in the system.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q40.</span> What is a cron trigger?</p>
+<div class="a"><p><b>Short:</b> a schedule-based trigger, here the expression <span class="mono">0 */5 * * * *</span>. <b>Reasoning:</b> settlement is periodic, not event-driven from the chain's perspective. <b>In ProofPay:</b> a deployed workflow would evaluate every five minutes; the simulator fires once per invocation.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q41.</span> What does the HTTP capability do in your workflow?</p>
+<div class="a"><p><b>Short:</b> performs <span class="mono">GET /api/shipments</span> and returns the body as text, with consensus aggregation available. <b>Reasoning:</b> this is the only place external data enters the decision. <b>In ProofPay:</b> a failure here ends the run with no settlement rather than a partial one.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q42.</span> What does the EVM capability do?</p>
+<div class="a"><p><b>Short:</b> performs a contract read (and, in principle, a report write) on a chain selected by a CRE chain selector. <b>Reasoning:</b> it lets the workflow verify on-chain state before deciding. <b>In ProofPay:</b> it reads <span class="mono">getEscrow</span> at the last finalised block and skips anything not <span class="mono">Funded</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q43.</span> What is a CRE report?</p>
+<div class="a"><p><b>Short:</b> the SDK object holding your ABI-encoded payload plus a runtime metadata header. <b>Reasoning:</b> the header is provenance; the body is what the receiver decodes. <b>In ProofPay:</b> 109-byte header, 256-byte body, 365-byte raw report — and the extraction code proves which slice it used.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q44.</span> What is a receipt, and what does status 1 mean?</p>
+<div class="a"><p><b>Short:</b> the node's record that a transaction was included and what it did; status 1 means it succeeded. <b>Reasoning:</b> a hash alone proves broadcasting, not success. <b>In ProofPay:</b> every settlement was verified by receipt status, block number, gas used and the emitted events.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q45.</span> Why are reads free but writes costly?</p>
+<div class="a"><p><b>Short:</b> reads are executed locally against current state and change nothing; writes must be replicated and stored by every node. <b>Reasoning:</b> cost prices permanent storage. <b>In ProofPay:</b> this is why shipment status is off chain and only the escrow's essential facts are stored.</p></div></div>
+
+<h2>14.3 Level 3 &mdash; your architecture</h2>
+
+<div class="qa"><p class="q"><span class="qn">Q46.</span> Explain the ProofPay architecture in one minute.</p>
+<div class="a"><p><b>Short:</b> React talks to MetaMask and to an Express API; three contracts on Hardhat hold the money and the rules; a CRE workflow reads the API and the escrow, decides, and emits a report; a local bridge relays that report to the receiver, which instructs the escrow to pay. <b>Reasoning:</b> each layer owns one fact and one authority. <b>Instance:</b> the buyer's escrow, the seller's shipment record, CRE's decision, and the receiver's authorisation are four separate things that must all agree.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q47.</span> Why a custom token instead of ETH?</p>
+<div class="a"><p><b>Short:</b> to separate protected value from gas and to keep amounts exact. <b>Reasoning:</b> ETH-denominated escrow conflates fees with principal and makes demonstrations unstable. <b>Trade-off:</b> pUSD is a prototype with no reserve, and every claim must say so.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q48.</span> Why can't the seller access the funds immediately?</p>
+<div class="a"><p><b>Short:</b> because the escrow has no withdrawal function at all. <b>Reasoning:</b> protection requires that no one — seller, buyer, owner — can move the deposit before the condition. <b>Instance:</b> the only two paths are <span class="mono">confirmDelivery</span> and <span class="mono">confirmFailure</span>, both <span class="mono">onlyOracle</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q49.</span> Why is there a separate receiver contract?</p>
+<div class="a"><p><b>Short:</b> to keep report handling out of the custody contract and to present the interface a DON expects. <b>Reasoning:</b> smaller money contracts are easier to audit; report policy changes more often than custody. <b>Trade-off:</b> one more address and ~51,000 extra gas per settlement.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q50.</span> What does <span class="mono">manualOracle</span> mean?</p>
+<div class="a"><p><b>Short:</b> an address the receiver will also accept reports from, intended for local testing and break-glass operation. <b>Reasoning:</b> without it, nothing could be settled before CRE worked, and an oracle outage would freeze funds. <b>Trade-off:</b> a real weakening when set to an EOA; production should use a multisig or remove it.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q51.</span> How does shipment registration work?</p>
+<div class="a"><p><b>Short:</b> the seller POSTs order ID, tracking ID, carrier and address to the API, which validates duplicates, verifies the escrow is funded on chain and that the seller matches, then stores a record with an event history. <b>Reasoning:</b> registration is the seller's claim; the chain verification is what makes the claim meaningful.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q52.</span> How does CRE read escrow data?</p>
+<div class="a"><p><b>Short:</b> it ABI-encodes <span class="mono">getEscrow(orderId)</span> with viem, sends it through <span class="mono">EVMClient.callContract</span> at the last finalised block, and decodes the returned struct. <b>Reasoning:</b> reading at a finalised block avoids deciding on a reorg-prone tip. <b>Instance:</b> status must be 1, otherwise the shipment is skipped and logged.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q53.</span> How does the local execution bridge work?</p>
+<div class="a"><p><b>Short:</b> it runs the CRE simulator, parses the structured report lines, validates and cross-checks them, then submits the exact bytes to <span class="mono">processReport</span> from an unlocked local account and verifies the receipt. <b>Reasoning:</b> the decision stays in CRE; the bridge only carries it. <b>Instance:</b> the block-29 refund.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q54.</span> Why does the bridge not just call <span class="mono">confirmFailure</span> itself?</p>
+<div class="a"><p><b>Short:</b> because only the oracle can, and the oracle is the receiver. <b>Reasoning:</b> routing through the receiver is what enforces replay and duplicate protection; a direct call would bypass the entire policy layer. <b>Instance:</b> the admin EOA cannot call the escrow's settlement functions at all.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q55.</span> What is the difference between the manual and automatic paths?</p>
+<div class="a"><p><b>Short:</b> manual builds a report in the browser with a zeroed tracking hash; automatic uses a CRE report with a real tracking hash and provenance. <b>Reasoning:</b> both pass the same receiver checks, but only the automatic path has evidence linking the decision to a courier record. <b>Instance:</b> the oracle panel is the manual path; the bridge is the automatic one.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q56.</span> Why is shipment status not stored on chain?</p>
+<div class="a"><p><b>Short:</b> it changes six times, comes from outside, and must be correctable. <b>Reasoning:</b> on-chain writes are permanent and cost gas; a mis-scan would be unfixable. <b>Instance:</b> the JSON store is the record; the chain stores only the settlement and its report ID.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q57.</span> How is a settlement prevented from happening twice?</p>
+<div class="a"><p><b>Short:</b> three layers: the escrow's Funded check, the receiver's two mappings, and the bridge's state file. <b>Reasoning:</b> each layer covers a different failure — a buggy caller, a replayed report, a retried process. <b>Instance:</b> blocks 24, 29 and 30 each advanced the chain by exactly one, so no duplicate was hidden.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q58.</span> What does the courier scheduler do, and what does it not do?</p>
+<div class="a"><p><b>Short:</b> it advances demo shipments through the timeline and optionally runs CRE and the bridge; it never decides settlement or touches contracts. <b>Reasoning:</b> separating the fact generator from the decision keeps CRE's authority intact. <b>Instance:</b> <span class="mono">-LOST</span> suffix decides the courier outcome, not the payout.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q59.</span> Why does the receiver store a hash of the tracking ID?</p>
+<div class="a"><p><b>Short:</b> to tie the settlement to a specific shipment record without publishing the tracking number. <b>Reasoning:</b> evidence plus privacy; it also contributes to the report ID. <b>Instance:</b> the manual path uses a zero hash, which is exactly why it is weaker.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q60.</span> What happens if CRE never runs?</p>
+<div class="a"><p><b>Short:</b> the escrow stays Funded; nothing is lost but nothing settles. <b>Reasoning:</b> the system fails safe, not open. <b>Instance:</b> the manual oracle path or a redeployed workflow is the recovery, and the funds remain claimable because they are still in custody.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q61.</span> Why does the checkout validate the seller address before prompting the wallet?</p>
+<div class="a"><p><b>Short:</b> to avoid wasting a signature on a call that must revert. <b>Reasoning:</b> the contract enforces the same rules, but failing in the UI is cheaper and clearer. <b>Instance:</b> zero address, self-payment and malformed addresses are blocked in <span class="mono">handleSubmit</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q62.</span> How does the buyer dashboard know which orders are theirs?</p>
+<div class="a"><p><b>Short:</b> it discovers all order IDs from <span class="mono">EscrowCreated</span> logs, reads each escrow, and filters where <span class="mono">buyer == connected address</span>. <b>Reasoning:</b> chain state cannot be queried "by buyer" without an index, so filtering happens client-side. <b>Trade-off:</b> fine for a local demo, but a production app would index events in a database.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q63.</span> Why does the backend verify the escrow before accepting a shipment?</p>
+<div class="a"><p><b>Short:</b> a shipment for an unfunded order would have no money to settle. <b>Reasoning:</b> it also prevents a seller from registering an order that belongs to someone else. <b>Instance:</b> 404 <span class="mono">ESCROW_NOT_FOUND</span>, 409 <span class="mono">ESCROW_NOT_FUNDED</span>, 409 <span class="mono">SELLER_MISMATCH</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q64.</span> What would break if you removed the allowlist from the bridge?</p>
+<div class="a"><p><b>Short:</b> a run intended for one order would settle every eligible order CRE reported. <b>Reasoning:</b> the allowlist scopes a demonstration without changing the decision. <b>Instance:</b> the refund run reported two shipments; without the allowlist, two settlements would have been submitted.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q65.</span> What is the most important line in main.ts, and why?</p>
+<div class="a"><p><b>Short:</b> <span class="mono">const report = runtime.report(reportRequest).result();</span> placed <i>before</i> the dry-run branch. <b>Reasoning:</b> generation must happen regardless of whether the write is attempted, otherwise the safe configuration produces nothing to capture. <b>Instance:</b> that reordering is what made the entire local bridge possible.</p></div></div>

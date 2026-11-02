@@ -1,0 +1,264 @@
+<h1 class="module"><span class="mtag">MODULE 8</span>THE LOCAL EXECUTION BRIDGE</h1>
+
+<p>This is the component that makes the local demonstration possible, and the one most likely to be misunderstood in an interview. Learn its boundaries before its code: the bridge carries a decision, it never makes one.</p>
+
+<h2>8.1 Why a bridge exists at all</h2>
+
+<p>A CRE workflow's normal on-chain write path is <span class="mono">evmClient.writeReport(...)</span>, which targets a chain selected by a CRE chain selector. The installed SDK (1.23.0) has no selector for a local Hardhat node on chain ID 31337. Two consequences follow: the workflow cannot deliver a report to the local escrow by itself, and no DON was available to deploy to anyway.</p>
+
+<p>So the workflow runs in the official CLI simulator with <span class="mono">dryRun: true</span>, producing a real report but no transaction. Something must carry that report the last metre. That something is <span class="mono">local-runner.ts</span>, a Node/Bun script that runs the simulator, parses its structured output, validates everything it can, and submits the exact bytes through <span class="mono">processReport</span>.</p>
+
+<div class="box warn">
+  <span class="lbl">What this architecture is, and is not</span>
+  <p><b>It is:</b> genuine CRE workflow execution (real HTTP fetch, real EVM read, real decision, real ABI encoding) plus a local relay.</p>
+  <p><b>It is not:</b> a Chainlink DON, decentralised consensus, or DON-signed delivery. One machine runs the simulation and one unlocked local account submits. Anyone who says this is "oracle decentralisation" is wrong, and the receiver's checks — not the bridge — are what protect the funds.</p>
+</div>
+
+<h2>8.2 The seventeen steps, and where each lives in the code</h2>
+
+<table class="tbl">
+  <caption>Table 8.1: The bridge's execution path</caption>
+  <thead><tr><th style="width:6%">#</th><th style="width:30%">Step</th><th style="width:64%">Implementation detail</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Load configuration</td><td><span class="mono">loadConfig()</span> reads RPC URL, expected chain ID, receiver, escrow, admin, allowlist, dry-run flag, timeout, state file, CRE command.</td></tr>
+    <tr><td>2</td><td>Acquire a single-instance lock</td><td><span class="mono">acquireLock(LOCK_FILE)</span> with <span class="mono">open(file, "wx")</span>; a stale lock from a dead pid is detected with <span class="mono">isProcessAlive</span> and removed.</td></tr>
+    <tr><td>3</td><td>Preflight the chain</td><td>Chain ID, bytecode at receiver and escrow, unlocked admin, <span class="mono">receiver.manualOracle == admin</span>, <span class="mono">escrow.oracle == receiver</span>, admin ETH balance.</td></tr>
+    <tr><td>4</td><td>Start the CRE simulation</td><td><span class="mono">spawn("cre", ["workflow","simulate","shipment-workflow","--target","staging-settings","--trigger-index","0","--non-interactive"])</span> with a timeout.</td></tr>
+    <tr><td>5</td><td>Capture stdout/stderr</td><td>Line-by-line consumption; ANSI escapes stripped with <span class="mono">ANSI_PATTERN</span>.</td></tr>
+    <tr><td>6</td><td>Identify structured records</td><td>Only lines starting with <span class="mono">PROOFPAY_REPORT_V1:</span> are parsed; all other output is passed through as human log.</td></tr>
+    <tr><td>7</td><td>Join <span class="mono">report</span> and <span class="mono">meta</span> records</td><td>Matched by order ID. A report without its meta record is rejected rather than guessed at.</td></tr>
+    <tr><td>8</td><td>Extract bytes</td><td><span class="mono">line.report</span> is already the receiver-compatible payload; the bridge does not decode or strip anything.</td></tr>
+    <tr><td>9</td><td>Validate fields</td><td>Order ID matches <span class="mono">/^0x[0-9a-fA-F]{64}$/</span>; outcome is DELIVERED or LOST; report and metadata are hex.</td></tr>
+    <tr><td>10</td><td>Cross-check provenance</td><td><span class="mono">meta.receiver</span> and <span class="mono">meta.escrow</span> must equal configuration; <span class="mono">meta.reportDecodesToReceiverAbi</span> must not be false; <span class="mono">meta.creDryRun</span> must not be false.</td></tr>
+    <tr><td>11</td><td>Decode independently</td><td><span class="mono">decodeAbiParameters</span> on the bytes; the four decoded fields must match the line's own claims.</td></tr>
+    <tr><td>12</td><td>Recompute the report ID</td><td><span class="mono">keccak256(encodePacked([...]))</span> mirroring the receiver exactly, so both agree on the replay key.</td></tr>
+    <tr><td>13</td><td>Apply the allowlist</td><td>If <span class="mono">BRIDGE_ORDER_ALLOWLIST</span> is set, only those order IDs may proceed; others are logged as "NOT IN ALLOWLIST".</td></tr>
+    <tr><td>14</td><td>Check on-chain state</td><td><span class="mono">getEscrow(orderId)</span>: must exist, must be <span class="mono">Funded</span>; seller and amount are read for the log.</td></tr>
+    <tr><td>15</td><td>Check duplicates</td><td>State file's report IDs and <span class="mono">processedReports</span> must not contain this report ID; <span class="mono">orderSettled</span> must be false.</td></tr>
+    <tr><td>16</td><td>Prepare and submit</td><td><span class="mono">encodeFunctionData(processReport(metadata, report))</span>, then <span class="mono">walletClient.sendTransaction({ to, data })</span> — sent as an unlocked account, no key.</td></tr>
+    <tr><td>17</td><td>Verify and record</td><td>Wait for the receipt, require <span class="mono">status === "success"</span>, write <span class="mono">{orderId,outcome,reportId,txHash,blockNumber,from,submittedAt}</span> to <span class="mono">.local-bridge-state.json</span>.</td></tr>
+  </tbody>
+</table>
+
+<h2>8.3 Preflight: the part that saves you from yourself</h2>
+
+<pre class="code">const chainId = await withRetry("chain id", () =&gt; publicClient.getChainId());
+if (chainId !== config.expectedChainId) failures.push(`Chain ID ${chainId} is not ${config.expectedChainId}.`);
+
+const receiverCode = await publicClient.getCode({ address: config.receiver });
+if (!receiverCode || receiverCode === "0x") failures.push(`No bytecode at receiver ${config.receiver}.`);
+
+const unlocked = (await walletClient.getAddresses()).map(getAddress);
+if (!unlocked.some(a =&gt; a.toLowerCase() === config.admin.toLowerCase()))
+  failures.push(`Admin ${config.admin} is not an unlocked RPC account.`);
+
+const manualOracle = await publicClient.readContract({ address: config.receiver, abi: RECEIVER_ABI, functionName: "manualOracle" });
+if (getAddress(manualOracle).toLowerCase() !== config.admin.toLowerCase())
+  failures.push(`receiver.manualOracle() is ${manualOracle}, but the bridge signer is ${config.admin}.`);
+
+const oracle = await publicClient.readContract({ address: config.escrow, abi: ESCROW_ABI, functionName: "oracle" });
+if (getAddress(oracle).toLowerCase() !== config.receiver.toLowerCase())
+  failures.push(`escrow.oracle() is ${oracle}, expected the receiver.`);</pre>
+
+<p>Every one of those six checks corresponds to a real failure mode: wrong network, wrong addresses after a redeploy, an account MetaMask switched, a receiver whose manual oracle was rotated, an escrow still pointing at the admin EOA, and an empty gas balance. The observed output prints each line with "ok" or "MISMATCH", so a failing preflight tells you which fact is wrong without any further debugging. In the dry-run shown in the report, the block read <span class="mono">chainId 31337 ok</span>, <span class="mono">receiver code 3583 bytes ok</span>, <span class="mono">escrow code 3274 bytes ok</span>, <span class="mono">admin unlocked ok (rpc accounts: 20)</span>, <span class="mono">receiver.oracle … ok (== signer)</span>, <span class="mono">escrow.oracle … ok (== receiver)</span>.</p>
+
+<h2>8.4 Validation: the bridge repeats the contract's checks, in TypeScript</h2>
+
+<pre class="code">if (!ORDER_ID_PATTERN.test(line.orderId)) problems.push("orderId is not a bytes32 hex string");
+if (!SUPPORTED_OUTCOMES.includes(line.outcome))
+  problems.push(`outcome "${line.outcome}" is not one of ${SUPPORTED_OUTCOMES.join(", ")}`);
+if (meta.reportDecodesToReceiverAbi === false)
+  problems.push("CRE reported that its bytes are not the receiver ABI payload");
+if (meta.creDryRun === false)
+  problems.push("CRE dryRun is false: CRE itself may submit reports. Refusing to bridge to avoid a duplicate settlement.");
+
+const decoded = decodeAbiParameters(SETTLEMENT_REPORT_ABI, line.report);
+if (decoded[0].toLowerCase() !== line.orderId.toLowerCase())
+  problems.push("bytes decode to a different orderId than the line advertises");
+if (decoded[1] !== line.outcome) problems.push("bytes decode to a different outcome");
+if (decoded[2] === undefined || decoded[3] !== line.observedAt) problems.push("bytes decode to a different observedAt");</pre>
+
+<p>The <span class="mono">creDryRun === false</span> check is subtle and worth memorising: if someone flips CRE's own dry-run off, both CRE and the bridge could deliver the same report, and the second delivery would revert on replay. Rather than rely on that revert, the bridge refuses to run at all — a fail-closed design. The independent decode is the other notable choice: the bridge does not trust CRE's summary of what it produced; it decodes the bytes itself and requires them to agree with the advertised fields.</p>
+
+<p>Report-ID recomputation mirrors the Solidity exactly:</p>
+
+<pre class="code">const reportId = keccak256(encodePacked(
+  ["bytes32", "string", "bytes32", "string", "bytes"],
+  [line.orderId, line.outcome, decodedTrackingIdHash, decodedObservedAt, line.metadata]
+));</pre>
+
+<p>Compare this with the receiver's <span class="mono">keccak256(abi.encodePacked(orderId, outcome, trackingIdHash, observedAt, metadata))</span>. Same fields, same order, same packing — so the two independently compute the same 32 bytes. If they diverged, the bridge's duplicate check would be useless and the contract's replay protection would still hold, but the logs would lie. Matching them is a correctness requirement, not a nicety.</p>
+
+<h2>8.5 Submission without a private key</h2>
+
+<pre class="code">const walletClient = createWalletClient({ account: config.admin, transport });
+// Passing the account as an address makes viem use eth_sendTransaction,
+// i.e. the Hardhat node's unlocked account. No key material is involved.
+const hash = await walletClient.sendTransaction({ to: config.receiver, data: calldata });
+const receipt = await publicClient.waitForTransactionReceipt({ hash });</pre>
+
+<p>This is the security highlight of the whole component: there is no <span class="mono">CRE_ADMIN_PRIVATE_KEY</span> anywhere, because the Hardhat node already holds the key and exposes the account as unlocked. A private key in an environment file would have been the most dangerous artefact in the repository; not having one removes a whole class of leak.</p>
+
+<h2>8.6 Idempotency, retries and state</h2>
+
+<p>The state file is a JSON document listing successful submissions. On startup the bridge loads it; before submitting it checks the report ID against it, and also against the chain's <span class="mono">processedReports</span> and <span class="mono">orderSettled</span>. On success it appends a record. On failure it does <b>not</b> retry: a reverted submission is reported, the cause is decoded from the revert data, and the process exits non-zero. Blind retries after an ambiguous failure are exactly how duplicate settlements happen, so the bridge refuses to guess.</p>
+
+<table class="tbl">
+  <caption>Table 8.2: Responsibilities, split cleanly between CRE and the bridge</caption>
+  <thead><tr><th style="width:34%">Concern</th><th style="width:33%">CRE workflow</th><th style="width:33%">Local bridge</th></tr></thead>
+  <tbody>
+    <tr><td>Fetch shipment data</td><td>Yes — HTTP capability</td><td>Never</td></tr>
+    <tr><td>Read escrow state</td><td>Yes — EVM capability</td><td>Yes, but only as a preflight/duplicate check</td></tr>
+    <tr><td>Decide RELEASE / REFUND</td><td>Yes — <span class="mono">shouldSettle</span></td><td>Never; it only accepts DELIVERED or LOST</td></tr>
+    <tr><td>Encode the report</td><td>Yes — ABI encoding + <span class="mono">runtime.report</span></td><td>Never; it relays bytes unchanged</td></tr>
+    <tr><td>Trim SDK metadata header</td><td>Yes — <span class="mono">extractAbiPayload</span></td><td>No; it trusts only the reported <span class="mono">report</span> field</td></tr>
+    <tr><td>Authorise the report on chain</td><td>No</td><td>No — the receiver does</td></tr>
+    <tr><td>Prevent duplicates</td><td>No</td><td>Yes, in addition to the receiver's own mappings</td></tr>
+    <tr><td>Sign / submit the transaction</td><td>No (<span class="mono">dryRun</span>)</td><td>Yes, via an unlocked account</td></tr>
+  </tbody>
+</table>
+
+<h2>8.7 What would change for a real DON deployment</h2>
+
+<ol>
+  <li>The workflow would be deployed to a DON with <span class="mono">dryRun: false</span>, and the shipment API would have to be publicly reachable over HTTPS with authentication, not <span class="mono">localhost</span>.</li>
+  <li>The receiver's <span class="mono">forwarder</span> would be set to the DON's forwarder address, and the owner fallback branch in <span class="mono">onlyAuthorized</span> would be removed.</li>
+  <li>The bridge would be deleted. <span class="mono">writeReport</span> would deliver the report; the receiver's replay and duplicate checks would remain the safety net.</li>
+  <li><span class="mono">manualOracle</span> would stay as a documented break-glass path with a multisig, or be removed.</li>
+  <li>The EVM read would target a supported chain selector, and the escrow would be deployed on that same chain.</li>
+</ol>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 8</span>
+  <p><b>Q.</b> "Isn't the bridge just re-implementing the oracle?" <b>A.</b> No: an oracle decides what the outside world says. The bridge never looks at a shipment; it reads CRE's output, refuses anything malformed, and submits. Remove the bridge and the decision still exists in CRE; remove CRE and the bridge has nothing to submit.</p>
+  <p><b>Q.</b> "What stops the bridge from submitting a report twice?" <b>A.</b> Three things: its own state file, the receiver's <span class="mono">processedReports</span>, and its refusal to retry after any failure. The second is the only one that matters if the bridge's disk is wiped.</p>
+</div>
+
+<h1 class="module"><span class="mtag">MODULE 9</span>THE AUTOMATIC COURIER SCHEDULER</h1>
+
+<p><span class="mono">courier-scheduler.ts</span> is the component that makes the demonstration self-driving. Its header comment states its limits better than any paraphrase: it pushes shipments through a timeline, then runs the existing CRE simulation and the existing bridge. It never decides a settlement, never touches the contracts, and never submits a transaction itself.</p>
+
+<h2>9.1 Configuration and timeline</h2>
+
+<table class="tbl">
+  <caption>Table 9.1: Scheduler environment variables and defaults</caption>
+  <thead><tr><th style="width:30%">Variable</th><th style="width:18%">Default</th><th style="width:52%">Effect</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">COURIER_API_BASE</span></td><td><span class="mono">http://localhost:5001</span></td><td>Which API it patches.</td></tr>
+    <tr><td><span class="mono">COURIER_MANAGE_PREFIX</span></td><td><span class="mono">PPD-</span></td><td>Only shipments whose tracking ID starts with this are advanced, so legacy records are never touched.</td></tr>
+    <tr><td><span class="mono">COURIER_SHIPPED_AFTER_MS</span></td><td>10,000</td><td>CREATED → SHIPPED delay.</td></tr>
+    <tr><td><span class="mono">COURIER_IN_TRANSIT_AFTER_MS</span></td><td>10,000</td><td>SHIPPED → IN_TRANSIT delay.</td></tr>
+    <tr><td><span class="mono">COURIER_FINAL_AFTER_MS</span></td><td>20,000</td><td>IN_TRANSIT → DELIVERED or LOST delay.</td></tr>
+    <tr><td><span class="mono">COURIER_POLL_MS</span></td><td>3,000</td><td>Loop interval.</td></tr>
+    <tr><td><span class="mono">COURIER_RUN_BRIDGE</span></td><td>true</td><td>Whether to run CRE + bridge after an update.</td></tr>
+    <tr><td><span class="mono">COURIER_RUN_SECONDS</span></td><td>0 (forever)</td><td>Bounded demo runs.</td></tr>
+    <tr><td><span class="mono">COURIER_ONCE</span></td><td>false</td><td>Single tick, useful in tests.</td></tr>
+  </tbody>
+</table>
+
+<h2>9.2 Status progression and the LOST convention</h2>
+
+<pre class="code">case "CREATED":    return "SHIPPED";
+case "SHIPPED":    return "IN_TRANSIT";
+case "IN_TRANSIT": return trackingId.toUpperCase().endsWith("-LOST") ? "LOST" : "DELIVERED";</pre>
+
+<p>The outcome of a shipment is decided by its tracking ID suffix: <span class="mono">PPD-MACBOOK-001</span> ends in <span class="mono">DELIVERED</span>; <span class="mono">PPD-DEMO-LOST</span> ends in <span class="mono">LOST</span>. This is a courier fact generator, not a settlement rule, and the file says so. CRE still reads the resulting status and decides what it means.</p>
+
+<h2>9.3 One tick, in order</h2>
+
+<pre class="code">const due = shipments.filter(s =&gt; isDue(s, config));         // prefix + elapsed delay
+if (due.length === 0) { logIdleOnce(`waiting:${waiting}`, ...); return 0; }
+
+let updates = 0;
+for (const shipment of due) {
+  const target = nextStatus(shipment.status, shipment.trackingId);
+  if (!target) continue;
+  const updated = await patchStatus(config, shipment.trackingId, target);   // authenticated PATCH
+  log(`[courier] ${shipment.trackingId}: ${shipment.status} -&gt; ${updated.status}`);
+  updates++;
+}
+if (updates &gt; 0 && config.runBridge) {
+  log(`[courier] ${updates} update(s); starting CRE workflow + local bridge`);
+  await runBridge(config);
+}</pre>
+
+<p>Three properties are worth naming. Updates are applied one at a time and awaited, so two shipments reaching a terminal state together cannot start two overlapping CRE executions. The bridge is started only after at least one successful update, so idle ticks cost nothing. And the bridge inherits <span class="mono">LOCAL_BRIDGE_DRY_RUN</span>, which defaults to true, so the scheduler cannot accidentally send money unless someone explicitly opted in.</p>
+
+<p>A lock file (<span class="mono">.courier-scheduler.lock</span>) prevents two scheduler instances, using the same create-with-<span class="mono">wx</span> technique as the bridge and the same stale-pid recovery. The scheduler also logs its mode at startup: "DRY RUN - no transaction will be sent" versus "LIVE", plus the reminder that CRE's dry-run stays true and the bridge decides nothing.</p>
+
+<h2>9.4 The MacBook demonstration, step by step</h2>
+
+<ol>
+  <li>Buyer funds an escrow of 3,499 pUSD for the seller. The escrow exists and is <span class="mono">Funded</span>.</li>
+  <li>Seller registers tracking ID <span class="mono">PPD-MACBOOK-001</span> against that order. The API validates the escrow is funded and the seller matches, then stores status <span class="mono">CREATED</span>.</li>
+  <li>Scheduler tick at t+10s: patches status to <span class="mono">SHIPPED</span>. An event is appended. The scheduler then starts CRE + bridge; CRE reports nothing yet because SHIPPED maps to NONE, and the bridge has no report to parse.</li>
+  <li>Tick at t+20s: <span class="mono">IN_TRANSIT</span>. Same outcome: no report, escrow untouched.</li>
+  <li>Tick at t+40s: <span class="mono">DELIVERED</span>, because the tracking ID does not end in <span class="mono">-LOST</span>. Now CRE's <span class="mono">shouldSettle</span> returns RELEASE, the escrow is still funded, and a 256-byte report is emitted.</li>
+  <li>The scheduler's bridge run parses that report, validates it, and — if dry-run is off — submits <span class="mono">processReport</span>. The receiver checks authorisation, replay, duplicate and funding, calls <span class="mono">confirmDelivery</span>, and the seller receives 3,499 pUSD.</li>
+</ol>
+
+<div class="box warn">
+  <span class="lbl">What was actually demonstrated</span>
+  <p>The three settlements executed on chain were 100 pUSD orders: <span class="mono">0x4d07…aaf3</span> (release, block 24), <span class="mono">0x0c34…1152</span> (refund, block 29) and <span class="mono">0xf694…c26434</span> (release, block 30). A 3,499 pUSD escrow was observed funded at block 32 but was not settled during the recorded work. So the MacBook narrative above describes the mechanism exactly as implemented, while the measured evidence comes from the 100 pUSD orders. Distinguishing the two is precisely the honesty an examiner rewards.</p>
+</div>
+
+<h2>9.5 What changes for a LOST shipment</h2>
+
+<p>Only the final status. A tracking ID ending in <span class="mono">-LOST</span> transitions <span class="mono">IN_TRANSIT → LOST</span>, and from there everything is symmetric: CRE maps LOST to REFUND, the report carries outcome LOST, the receiver calls <span class="mono">confirmFailure</span>, and the escrow pays the <i>buyer</i> instead of the seller. The observed refund at block 29 did exactly this for 100 pUSD, with the buyer's balance rising from 4,007 to 4,107 and the seller's unchanged.</p>
+
+<h1 class="module"><span class="mtag">MODULE 10</span>THE COMPLETE WALKTHROUGH: 3,499 pUSD FOR A MACBOOK</h1>
+
+<p>This module is the story you will tell in an interview. Each stage is given twice: first in plain English, as you would explain it to a non-technical friend, then technically, as you would defend it to an engineer.</p>
+
+<h2>Stage 1 — Purchase</h2>
+
+<p><b>Plain.</b> The buyer chooses a MacBook, connects their wallet, and pays into a locked box that neither they nor the seller can open. The seller can see that the money exists but cannot touch it.</p>
+
+<p><b>Technical.</b> React generates a random 32-byte <span class="mono">orderId</span>, validates the seller address and the amount, then sends <span class="mono">approve(escrow, 3499e18)</span>. After that receipt, it sends <span class="mono">createEscrow(orderId, seller, 3499e18)</span>. The escrow validates six conditions, writes a <span class="mono">Funded</span> struct, pulls the tokens with <span class="mono">safeTransferFrom</span>, and emits <span class="mono">EscrowCreated</span>. Two receipts, two confirmations, 156k and 46k gas respectively. The buyer's balance drops by exactly 3,499 pUSD; the escrow's balance rises by the same amount.</p>
+
+<h2>Stage 2 — Seller registration</h2>
+
+<p><b>Plain.</b> The seller says "I have shipped it, here is the tracking number". This goes into the courier's system, not the blockchain, because it will change several times.</p>
+
+<p><b>Technical.</b> <span class="mono">POST /api/shipments</span> with the mutation secret. The service normalises the input, rejects duplicates by tracking ID and by order, calls <span class="mono">getEscrow</span> over RPC, and requires <span class="mono">status === 1</span> and <span class="mono">escrow.seller === sellerAddress</span>. It stores the record with status <span class="mono">CREATED</span> and the first event, and re-runs the duplicate check after the async call to close the race.</p>
+
+<h2>Stage 3 — Courier progress</h2>
+
+<p><b>Plain.</b> Over the next minute the parcel moves: dispatched, in transit, delivered. Each step is recorded with a timestamp.</p>
+
+<p><b>Technical.</b> The scheduler polls <span class="mono">GET /api/shipments</span>, filters to <span class="mono">PPD-</span> records with elapsed delays, and sends authenticated <span class="mono">PATCH</span> requests. The service validates against <span class="mono">SHIPMENT_TRANSITIONS</span> inside the serialised store update and appends an event per change. A manual alternative exists in the admin dashboard's simulator; both paths hit the same endpoint and the same rules.</p>
+
+<h2>Stage 4 — CRE evaluation</h2>
+
+<p><b>Plain.</b> An independent program reads the courier's record and the locked box, and decides whether the delivery condition is satisfied.</p>
+
+<p><b>Technical.</b> The cron-triggered workflow fetches <span class="mono">GET /api/shipments</span> through the HTTP capability with consensus aggregation, parses defensively, and for each terminal shipment encodes <span class="mono">getEscrow</span> and reads it through the EVM capability at the last finalised block. It skips anything not <span class="mono">Funded</span>, applies <span class="mono">shouldSettle</span>, and builds the four-field payload. The report is generated, the payload source is verified, and two structured log records are emitted.</p>
+
+<h2>Stage 5 — Local relay</h2>
+
+<p><b>Plain.</b> Because the workflow cannot post to our local test chain directly, a small relay carries its signed-off decision the last step and submits it.</p>
+
+<p><b>Technical.</b> The bridge runs the simulation, parses only <span class="mono">PROOFPAY_REPORT_V1:</span> lines, joins report and meta by order ID, validates the outcome, decodes the bytes independently, recomputes the report ID, applies the allowlist, checks the escrow is still funded, and encodes <span class="mono">processReport(0x, report)</span>. It sends the transaction from the unlocked admin account and waits for a successful receipt, then records the submission.</p>
+
+<h2>Stage 6 — Settlement</h2>
+
+<p><b>Plain.</b> The receiver checks that the report is legitimate and unused, then tells the locked box to pay. Delivered means the seller is paid; lost means the buyer is refunded.</p>
+
+<p><b>Technical.</b> <span class="mono">_processReport</span> decodes, derives the report ID, checks <span class="mono">processedReports</span>, <span class="mono">orderSettled</span> and the funding self-call, then branches on the outcome hash. <span class="mono">confirmDelivery</span> writes <span class="mono">Released</span> and transfers to the seller; <span class="mono">confirmFailure</span> writes <span class="mono">Refunded</span> and transfers to the buyer. Both emit settlement events; the receiver marks both mappings and emits <span class="mono">ReportProcessed</span> and <span class="mono">SettlementExecuted</span>.</p>
+
+<table class="tbl">
+  <caption>Table 10.1: The three settlements that were actually executed and verified</caption>
+  <thead><tr><th style="width:9%">Test</th><th style="width:14%">Outcome</th><th style="width:24%">Order</th><th style="width:8%">Block</th><th style="width:9%">Gas</th><th style="width:36%">Verified effect</th></tr></thead>
+  <tbody>
+    <tr><td>TC-1</td><td>DELIVERED → RELEASE</td><td><span class="mono">0x4d07…aaf3</span></td><td>24</td><td>122,471</td><td>Escrow Released; seller +100 pUSD; <span class="mono">orderSettled true</span>.</td></tr>
+    <tr><td>TC-2</td><td>LOST → REFUND</td><td><span class="mono">0x0c34…1152</span></td><td>29</td><td>122,425</td><td>Escrow Refunded; buyer +100 pUSD; seller unchanged.</td></tr>
+    <tr><td>TC-3</td><td>DELIVERED → RELEASE</td><td><span class="mono">0xf694…c26434</span></td><td>30</td><td>122,471</td><td>Escrow Released; seller +100 pUSD, total 5,993.</td></tr>
+  </tbody>
+</table>
+
+<p>One detail from the refund run is worth memorising, because it demonstrates the safety design in a single log line: the CRE simulation reported <i>two</i> settlements — the lost order as eligible, and the delivered order as "NOT IN ALLOWLIST" — and the bridge submitted exactly one. CRE legitimately found two candidates; the allowlist and the skip logic ensured only the intended order moved money.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Modules 9 and 10</span>
+  <p><b>Q.</b> "Walk me through one order end to end." <b>A.</b> Use the six stages above, and end with the numbers: two wallet confirmations to fund, three courier updates, one CRE report of 256 bytes inside a 365-byte raw report, one <span class="mono">processReport</span> transaction at ~122k gas, receipt status 1, and exactly one balance change of the escrowed amount.</p>
+</div>

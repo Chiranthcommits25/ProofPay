@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "shipments": [
+    {
+      "trackingId": "PP-MOCK-01",
+      "orderId": "0x2608af0a61e83bf1780fe4b9848a61d728be80644943256abcffae624426858a",
+      "carrier": "MockCourier",
+      "sellerAddress": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "description": null,
+      "status": "DELIVERED",
+      "simulated": true,
+      "source": "mock-courier-simulator",
+      "createdAt": "2026-11-02T22:19:28.047Z",
+      "updatedAt": "2026-11-02T22:20:09.799Z",
+      "events": [
+        {
+          "status": "CREATED",
+          "timestamp": "2026-11-02T22:19:28.047Z",
+          "description": "Shipment registered with MockCourier (simulated courier data)."
+        },
+        {
+          "status": "SHIPPED",
+          "timestamp": "2026-11-02T22:19:53.094Z",
+          "description": "Auto courier: package dispatched."
+        },
+        {
+          "status": "IN_TRANSIT",
+          "timestamp": "2026-11-02T22:20:01.706Z",
+          "description": "Auto courier: package is in transit."
+        },
+        {
+          "status": "DELIVERED",
+          "timestamp": "2026-11-02T22:20:09.799Z",
+          "description": "Auto courier: package delivered."
+        }
+      ]
+    },
+    {
+      "trackingId": "PP-CHAIR-01",
+      "orderId": "0x4f2fac17cab208561e408eab0b87868e496625d591e891e2669a9f9534047a53",
+      "carrier": "MockCourier",
+      "sellerAddress": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+      "description": null,
+      "status": "LOST",
+      "simulated": true,
+      "source": "mock-courier-simulator",
+      "createdAt": "2026-11-02T22:22:58.153Z",
+      "updatedAt": "2026-11-02T22:23:50.856Z",
+      "events": [
+        {
+          "status": "CREATED",
+          "timestamp": "2026-11-02T22:22:58.153Z",
+          "description": "Shipment registered with MockCourier (simulated courier data)."
+        },
+        {
+          "status": "SHIPPED",
+          "timestamp": "2026-11-02T22:23:33.430Z",
+          "description": "Auto courier: package dispatched."
+        },
+        {
+          "status": "IN_TRANSIT",
+          "timestamp": "2026-11-02T22:23:42.903Z",
+          "description": "Auto courier: package is in transit."
+        },
+        {
+          "status": "LOST",
+          "timestamp": "2026-11-02T22:23:50.856Z",
+          "description": "Auto courier: package reported lost."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,948 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════
+   Fonts — self-hosted variable, latin subset (88KB total)
+   Fallbacks carry matching metrics so `swap` causes no layout shift.
+   ═══════════════════════════════════════════════════════════════════ */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-var-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial'), local('Helvetica Neue'), local('Helvetica');
+  size-adjust: 107.04%;
+  ascent-override: 90.14%;
+  descent-override: 22.48%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono-var-latin.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Mono Fallback';
+  src: local('Menlo'), local('Consolas'), local('DejaVu Sans Mono'),
+    local('Courier New');
+  size-adjust: 100%;
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
+}
+
+@theme {
+  --font-sans: 'Inter', 'Inter Fallback', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Mono Fallback', ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace;
+
+  /* ── Type scale ────────────────────────────────────────────────
+     One ratio (~1.25), fluid between 360px and 1600px viewports.
+     Every text node maps to one of these roles.                    */
+  --text-display: clamp(2.5rem, 2.06rem + 1.94vw, 4rem);
+  --text-display--line-height: 1.02;
+  --text-display--letter-spacing: -0.035em;
+  --text-display--font-weight: 600;
+
+  --text-h1: clamp(1.75rem, 1.68rem + 0.32vw, 2rem);
+  --text-h1--line-height: 1.15;
+  --text-h1--letter-spacing: -0.025em;
+  --text-h1--font-weight: 600;
+
+  --text-h2: clamp(1.5rem, 1.39rem + 0.48vw, 1.875rem);
+  --text-h2--line-height: 1.2;
+  --text-h2--letter-spacing: -0.022em;
+  --text-h2--font-weight: 600;
+
+  --text-h3: clamp(1rem, 0.97rem + 0.12vw, 1.09rem);
+  --text-h3--line-height: 1.35;
+  --text-h3--letter-spacing: -0.01em;
+  --text-h3--font-weight: 600;
+
+  --text-lede: clamp(1rem, 0.97rem + 0.12vw, 1.09rem);
+  --text-lede--line-height: 1.6;
+  --text-lede--letter-spacing: -0.005em;
+
+  --text-body: clamp(0.9375rem, 0.92rem + 0.08vw, 1rem);
+  --text-body--line-height: 1.6;
+
+  --text-body-sm: 0.875rem;
+  --text-body-sm--line-height: 1.5;
+
+  --text-body-xs: 0.8125rem;
+  --text-body-xs--line-height: 1.5;
+
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.35;
+
+  --text-caption: 0.6875rem;
+  --text-caption--line-height: 1.3;
+
+  --text-amount: clamp(1.5rem, 1.43rem + 0.32vw, 1.75rem);
+  --text-amount-lg: clamp(1.625rem, 1.52rem + 0.48vw, 2rem);
+
+  /* ── Colour system ─────────────────────────────────────────────
+     Authored in OKLCH so the surface ramp keeps a stable hue and
+     every step is perceptually even. Verified contrast ratios:
+       ink-muted 4.70:1 on raised · 5.17:1 on elevated
+       white on accent-strong 5.17:1 (primary button label)
+       accent-ink 5.99:1 on raised                              */
+  --color-base: oklch(0.167 0.012 254);
+  --color-surface: oklch(0.21 0.032 265);
+  --color-elevated: oklch(0.234 0.028 260);
+  --color-raised: oklch(0.267 0.033 260);
+
+  --color-line-soft: oklch(0.246 0.034 260);
+  --color-line: oklch(0.282 0.033 258);
+  --color-line-strong: oklch(0.345 0.042 257);
+
+  --color-ink: oklch(0.984 0.003 248);
+  --color-ink-secondary: oklch(0.711 0.035 257);
+  --color-ink-muted: oklch(0.65 0.037 259);
+
+  /* Accent: one hue, three jobs.
+     accent      → identity, dots, tints, rings
+     accent-strong → fills that carry a white label
+     accent-ink  → accent-coloured text on dark surfaces          */
+  --color-accent: oklch(0.623 0.188 260);
+  --color-accent-strong: oklch(0.546 0.215 263);
+  --color-accent-hover: oklch(0.512 0.199 262);
+  --color-accent-ink: oklch(0.714 0.143 255);
+
+  --color-success: oklch(0.696 0.149 163);
+  --color-success-ink: oklch(0.773 0.153 163);
+  --color-warning: oklch(0.769 0.165 70);
+  --color-warning-ink: oklch(0.837 0.164 84);
+  --color-danger: oklch(0.637 0.208 25);
+  --color-danger-ink: oklch(0.808 0.103 20);
+
+  /* ── Radii — two surfaces, two controls, one pill ────────────── */
+  --radius-control: 0.625rem;
+  --radius-surface: 1rem;
+  --radius-pill: 999px;
+
+  /* ── Shadows — one lift, one popover ─────────────────────────── */
+  --shadow-lift: 0 20px 44px -28px rgb(0 0 0 / 0.9);
+  --shadow-pop: 0 28px 64px -24px rgb(0 0 0 / 0.9);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    border-color: var(--color-line);
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+    background-color: var(--color-base);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--color-base);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.6;
+    font-optical-sizing: auto;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--color-accent) 34%, transparent);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px var(--color-base),
+      0 0 0 4px color-mix(in oklch, var(--color-accent) 78%, transparent);
+  }
+
+  /* Subtle dark scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-base);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.32 0.03 258);
+    border: 2px solid var(--color-base);
+    border-radius: var(--radius-pill);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-line-strong);
+  }
+}
+
+@layer components {
+  /* ── Layout ─────────────────────────────────────────────── */
+  .container-page {
+    width: 100%;
+    max-width: 1360px;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+
+  @media (min-width: 640px) {
+    .container-page {
+      padding-inline: 2.5rem;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .container-page {
+      padding-inline: 3.5rem;
+    }
+  }
+
+  .page-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  @media (min-width: 1024px) {
+    .page-stack {
+      gap: 2.5rem;
+    }
+  }
+
+  .page-main {
+    padding-block: 2rem;
+  }
+
+  @media (min-width: 1024px) {
+    .page-main {
+      padding-block: 2.5rem;
+    }
+  }
+
+  /* Skip link — first focusable element on every page */
+  .skip-link {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 100;
+    display: inline-flex;
+    align-items: center;
+    height: 2.75rem;
+    padding-inline: 1.125rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-control);
+    background-color: var(--color-elevated);
+    color: var(--color-ink);
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+    box-shadow: var(--shadow-pop);
+    transform: translateY(calc(-100% - 1.5rem));
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+
+  /* ── Typography roles ───────────────────────────────────── */
+  .eyebrow {
+    font-size: var(--text-label);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+  }
+
+  .page-heading {
+    font-size: var(--text-h1);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+    color: var(--color-ink);
+  }
+
+  .page-description {
+    margin-top: 0.375rem;
+    font-size: var(--text-body);
+    line-height: 1.55;
+    color: var(--color-ink-secondary);
+  }
+
+  .section-title {
+    font-size: var(--text-h3);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+  }
+
+  .section-meta {
+    font-size: var(--text-body-xs);
+    font-weight: 500;
+    color: var(--color-ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Financial amounts ──────────────────────────────────── */
+  .amount {
+    display: inline-block;
+    font-size: var(--text-amount);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    white-space: nowrap;
+  }
+
+  .amount-lg {
+    font-size: var(--text-amount-lg);
+  }
+
+  .amount-sm {
+    font-size: var(--text-body-sm);
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+    font-weight: 500;
+  }
+
+  .amount-xs {
+    font-size: var(--text-label);
+    line-height: 1.3;
+    letter-spacing: -0.005em;
+    font-weight: 600;
+  }
+
+  /* ── Surfaces ───────────────────────────────────────────── */
+  .card {
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-surface);
+    background-color: var(--color-surface);
+  }
+
+  .panel {
+    --panel-pad: 1.5rem;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-surface);
+    background-color: var(--color-surface);
+    overflow: hidden;
+  }
+
+  /* Header and body share one horizontal padding token, so panel
+     titles and panel content start on the same vertical line. */
+  .panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem var(--panel-pad);
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+
+  .panel-body {
+    padding: var(--panel-pad);
+  }
+
+  .hairline-grid {
+    display: grid;
+    gap: 1px;
+    background-color: var(--color-line-soft);
+  }
+
+  .hairline-grid > * {
+    background-color: var(--color-surface);
+  }
+
+  /* ── Buttons ────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2.5rem;
+    padding-inline: 1rem;
+    border-radius: var(--radius-control);
+    border: 1px solid transparent;
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    touch-action: manipulation;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease,
+      opacity 150ms ease;
+    cursor: pointer;
+  }
+
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .btn-primary {
+    background-color: var(--color-accent-strong);
+    color: #ffffff;
+    border-color: color-mix(in oklch, var(--color-accent) 40%, transparent);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-accent-hover);
+  }
+
+  .btn-secondary {
+    background-color: var(--color-elevated);
+    border-color: var(--color-line);
+    color: var(--color-ink);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-raised);
+    border-color: var(--color-line-strong);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--color-ink-secondary);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--color-elevated);
+    color: var(--color-ink);
+  }
+
+  .btn-subtle {
+    background-color: color-mix(in oklch, var(--color-accent) 12%, transparent);
+    border-color: color-mix(in oklch, var(--color-accent) 26%, transparent);
+    color: var(--color-accent-ink);
+  }
+
+  .btn-subtle:hover:not(:disabled) {
+    background-color: color-mix(in oklch, var(--color-accent) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-accent) 38%, transparent);
+  }
+
+  .btn-danger {
+    background-color: color-mix(in oklch, var(--color-danger) 12%, transparent);
+    border-color: color-mix(in oklch, var(--color-danger) 24%, transparent);
+    color: var(--color-danger-ink);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in oklch, var(--color-danger) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-danger) 36%, transparent);
+  }
+
+  .btn-sm {
+    height: 2rem;
+    padding-inline: 0.75rem;
+    font-size: var(--text-body-xs);
+  }
+
+  .btn-lg {
+    height: 2.75rem;
+    padding-inline: 1.25rem;
+    font-size: var(--text-body);
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+    border-radius: var(--radius-control);
+    color: var(--color-ink-muted);
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .icon-btn:hover {
+    background-color: var(--color-elevated);
+    color: var(--color-ink);
+  }
+
+  /* ── Pills & chips ──────────────────────────────────────── */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 1.75rem;
+    padding-inline: 0.625rem;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-pill);
+    background-color: var(--color-elevated);
+    font-size: var(--text-label);
+    font-weight: 500;
+    line-height: 1;
+    color: var(--color-ink-secondary);
+    white-space: nowrap;
+  }
+
+  /* ── Forms ──────────────────────────────────────────────── */
+  .field-label {
+    display: block;
+    margin-bottom: 0.4375rem;
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+  }
+
+  .field {
+    width: 100%;
+    height: 2.5rem;
+    padding-inline: 0.875rem;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-control);
+    background-color: var(--color-elevated);
+    color: var(--color-ink);
+    /* 16px keeps iOS from zooming the viewport on focus */
+    font-size: 1rem;
+    transition:
+      border-color 150ms ease,
+      background-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+
+  .field::placeholder {
+    color: var(--color-ink-muted);
+  }
+
+  .field:hover {
+    border-color: var(--color-line-strong);
+  }
+
+  .field:focus {
+    outline: none;
+    border-color: color-mix(in oklch, var(--color-accent) 62%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 14%, transparent);
+  }
+
+  .field-mono {
+    font-family: var(--font-mono);
+    letter-spacing: -0.01em;
+  }
+
+  /* ── Tables ─────────────────────────────────────────────── */
+  .data-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    text-align: left;
+  }
+
+  .data-table thead th {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--color-line-soft);
+    background-color: color-mix(in oklch, var(--color-elevated) 55%, transparent);
+    color: var(--color-ink-muted);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .data-table tbody td {
+    padding: 1rem;
+    border-bottom: 1px solid var(--color-line-soft);
+    color: var(--color-ink);
+    font-size: var(--text-body-sm);
+    vertical-align: middle;
+  }
+
+  .data-table p {
+    text-wrap: nowrap;
+  }
+
+  .data-table tbody tr {
+    transition: background-color 140ms ease;
+  }
+
+  .data-table tbody tr:hover {
+    background-color: color-mix(in oklch, var(--color-elevated) 55%, transparent);
+  }
+
+  .data-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* ═════════════════════════════════════════════════════════════
+     Escrow ledger — the signature component
+     Buyer → Escrow contract → Seller, driven by escrowStatus only.
+     ═════════════════════════════════════════════════════════════ */
+  .ledger {
+    --panel-pad: 1.25rem;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-surface);
+    background-color: var(--color-surface);
+    overflow: hidden;
+  }
+
+  .ledger-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    padding: 0.75rem var(--panel-pad);
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+
+  .ledger-title {
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-ink-secondary);
+  }
+
+  .ledger-id {
+    padding-left: 0.5rem;
+    font-family: var(--font-mono);
+    color: var(--color-ink-muted);
+  }
+
+  .ledger-total {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    white-space: nowrap;
+  }
+
+  .ledger-unit {
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--color-ink-muted);
+  }
+
+  .ledger-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    padding-block: 0.875rem;
+  }
+
+  .ledger-node {
+    min-width: 0;
+    padding-inline: var(--panel-pad);
+  }
+
+  .ledger-node[data-align='center'] {
+    text-align: center;
+  }
+
+  .ledger-node[data-align='end'] {
+    text-align: right;
+  }
+
+  .ledger-role {
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+  }
+
+  .ledger-name {
+    margin-top: 0.1875rem;
+    font-size: var(--text-body-xs);
+    line-height: 1.4;
+    color: var(--color-ink-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ledger-name--mono {
+    font-family: var(--font-mono);
+    letter-spacing: -0.01em;
+  }
+
+  .ledger-subname {
+    margin-top: 0.0625rem;
+    font-size: var(--text-caption);
+    line-height: 1.35;
+    color: var(--color-ink-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ledger-copy {
+    flex: none;
+    min-width: 1.5rem;
+    min-height: 1.5rem;
+  }
+
+  .ledger-state {
+    font-size: var(--text-caption);
+    font-weight: 500;
+    line-height: 1.4;
+    color: var(--color-ink-muted);
+  }
+
+  .ledger-state[data-state='done'] {
+    color: var(--color-success-ink);
+  }
+
+  .ledger-state[data-state='active'] {
+    color: var(--color-accent-ink);
+  }
+
+  .ledger-state[data-state='error'] {
+    color: var(--color-danger-ink);
+  }
+
+  /* The rail: one hairline the money travels along */
+  .ledger-rail {
+    position: relative;
+    grid-column: 1 / -1;
+    height: 3.25rem;
+    margin-inline: var(--panel-pad);
+    margin-block: 0.25rem 0.375rem;
+  }
+
+  .ledger-track {
+    position: absolute;
+    top: 2.25rem;
+    left: 16.6667%;
+    right: 16.6667%;
+    height: 1px;
+    background-color: var(--color-line-strong);
+  }
+
+  .ledger-dot {
+    position: absolute;
+    top: 2.25rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-top: -0.25rem;
+    margin-left: -0.25rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-pill);
+    background-color: var(--color-surface);
+  }
+
+  .ledger-dot[data-slot='0'] {
+    left: 16.6667%;
+  }
+
+  .ledger-dot[data-slot='1'] {
+    left: 50%;
+  }
+
+  .ledger-dot[data-slot='2'] {
+    left: 83.3333%;
+  }
+
+  .ledger-dot[data-state='done'] {
+    border-color: transparent;
+    background-color: var(--color-success);
+  }
+
+  .ledger-dot[data-state='active'] {
+    border-color: color-mix(in oklch, var(--color-accent) 55%, white);
+    background-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 20%, transparent);
+  }
+
+  .ledger-dot[data-state='error'] {
+    border-color: transparent;
+    background-color: var(--color-danger);
+  }
+
+  /* Money token: one column wide, translated by whole columns so the
+     only animated property is transform (no layout, no repaint). */
+  .ledger-token {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    justify-content: center;
+    width: 33.3333%;
+    --slot: 1;
+    transform: translateX(calc(var(--slot) * 100%));
+    transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .ledger-token[data-slot='0'] {
+    --slot: 0;
+  }
+
+  .ledger-token[data-slot='1'] {
+    --slot: 1;
+  }
+
+  .ledger-token[data-slot='2'] {
+    --slot: 2;
+  }
+
+  .ledger-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    height: 1.5rem;
+    padding-inline: 0.5rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-pill);
+    background-color: var(--color-elevated);
+    color: var(--color-ink);
+  }
+
+  .ledger-chip .amount-xs {
+    color: inherit;
+  }
+
+  .ledger-token[data-tone='accent'] .ledger-chip {
+    border-color: color-mix(in oklch, var(--color-accent) 42%, transparent);
+    background-color: color-mix(in oklch, var(--color-accent) 16%, var(--color-surface));
+    color: var(--color-accent-ink);
+  }
+
+  .ledger-token[data-tone='success'] .ledger-chip {
+    border-color: color-mix(in oklch, var(--color-success) 38%, transparent);
+    background-color: color-mix(in oklch, var(--color-success) 14%, var(--color-surface));
+    color: var(--color-success-ink);
+  }
+
+  .ledger-token[data-tone='warning'] .ledger-chip {
+    border-color: color-mix(in oklch, var(--color-warning) 38%, transparent);
+    background-color: color-mix(in oklch, var(--color-warning) 14%, var(--color-surface));
+    color: var(--color-warning-ink);
+  }
+
+  .ledger-token[data-tone='danger'] .ledger-chip {
+    border-color: color-mix(in oklch, var(--color-danger) 40%, transparent);
+    background-color: color-mix(in oklch, var(--color-danger) 16%, var(--color-surface));
+    color: var(--color-danger-ink);
+  }
+
+  .ledger-token[data-tone='muted'] .ledger-chip {
+    color: var(--color-ink-muted);
+  }
+
+  /* ── Utilities ──────────────────────────────────────────── */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hero-grid {
+    background-image:
+      linear-gradient(to right, oklch(0.72 0.02 258 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.72 0.02 258 / 0.05) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(ellipse 70% 62% at 50% 0%, #000 20%, transparent 78%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 62% at 50% 0%, #000 20%, transparent 78%);
+  }
+
+  .hero-glow {
+    background: radial-gradient(
+      ellipse 48% 42% at 50% 0%,
+      color-mix(in oklch, var(--color-accent) 16%, transparent),
+      transparent 72%
+    );
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Touch targets — 44px minimum wherever the pointer is coarse
+   ═══════════════════════════════════════════════════════════════ */
+@media (hover: none) and (pointer: coarse) {
+  .btn {
+    min-height: 2.75rem;
+  }
+
+  .btn-sm {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+
+  .icon-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .hit-44 {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Reduced motion — the site stays complete, just calmer
+   ═══════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The ledger keeps its state cue without the travel */
+  .ledger-token {
+    transition: none;
+  }
+
+  .skip-link {
+    transition: none;
+  }
+}

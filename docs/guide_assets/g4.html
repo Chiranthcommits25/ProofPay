@@ -1,0 +1,287 @@
+<h1 class="module"><span class="mtag">MODULE 6</span>THE BACKEND AND THE SHIPMENT API</h1>
+
+<p>The backend is small, deliberately: one Express service, five routes, one JSON file, one validation layer. Its job is to be the off-chain system of record for physical progress, so that the oracle has something independent to read. It never touches the escrow, never holds keys, and never decides a settlement.</p>
+
+<h2>6.1 Node, Express and the shape of a REST API</h2>
+
+<p>Node.js runs JavaScript outside the browser, with a single-threaded event loop: I/O is asynchronous, so waiting for a file read does not block other requests. Express is a thin HTTP framework on top of Node: you register routes, and middleware functions run in order. This project uses Express 4.21.2 with only two extra dependencies, <span class="mono">cors</span> and <span class="mono">dotenv</span>.</p>
+
+<pre class="code">// backend/src/app.js (structure)
+const app = express();
+app.use(cors({ origin: config.corsOrigin }));
+app.use(express.json({ limit: '32kb' }));          // reject oversized bodies early
+app.use('/api/shipments', createShipmentRouter({ shipmentService, config }));
+app.use((req, res) =&gt; res.status(404).json({ error: 'NOT_FOUND' }));
+app.use((error, req, res, next) =&gt; { /* ApiError → status, else 500 */ });</pre>
+
+<p>REST means resources are addressed by URLs and verbs describe the intent: <span class="mono">GET</span> reads, <span class="mono">POST</span> creates, <span class="mono">PATCH</span> partially updates. The API's verbs are not decoration; each maps to a different service method and a different validation path.</p>
+
+<table class="tbl">
+  <caption>Table 6.1: The complete shipment API, as implemented</caption>
+  <thead><tr><th style="width:24%">Endpoint</th><th style="width:22%">Handler</th><th style="width:54%">Behaviour and status codes</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">GET /api/shipments</span></td><td><span class="mono">shipmentService.list(query)</span></td><td>Returns <span class="mono">{ shipments, count, simulated }</span>, newest first, with optional <span class="mono">orderId</span> and <span class="mono">status</span> filters. This is the exact call the CRE workflow makes.</td></tr>
+    <tr><td><span class="mono">GET /api/shipments/order/:orderId</span></td><td><span class="mono">getByOrderId</span></td><td>One record by 32-byte order ID, or 404 <span class="mono">SHIPMENT_NOT_FOUND</span>. Declared before <span class="mono">/:trackingId</span> so the literal path is not swallowed by the parameterised one.</td></tr>
+    <tr><td><span class="mono">GET /api/shipments/:trackingId</span></td><td><span class="mono">getByTrackingId</span></td><td>One record by tracking ID, or 404.</td></tr>
+    <tr><td><span class="mono">POST /api/shipments</span></td><td><span class="mono">register(body)</span></td><td>Protected by the mutation secret. 201 with a <span class="mono">Location</span> header on success; 400 validation, 404 <span class="mono">ESCROW_NOT_FOUND</span>, 409 <span class="mono">ESCROW_NOT_FUNDED</span> / <span class="mono">SELLER_MISMATCH</span> / <span class="mono">DUPLICATE_TRACKING_ID</span> / <span class="mono">SHIPMENT_ALREADY_EXISTS</span>.</td></tr>
+    <tr><td><span class="mono">PATCH /api/shipments/:trackingId/status</span></td><td><span class="mono">updateStatus</span></td><td>Protected by the mutation secret. 200 with the updated record; 409 <span class="mono">INVALID_STATUS_TRANSITION</span> with <span class="mono">{ from, to, allowed }</span>; 404 if the tracking ID is unknown.</td></tr>
+  </tbody>
+</table>
+
+<p>Every response carries <span class="mono">X-ProofPay-Data-Source: mock-courier-simulator</span> and <span class="mono">Cache-Control: no-store</span>. That is an honesty mechanism visible in the network tab: the data you are reading is simulated, and it must not be cached into a stale screenshot.</p>
+
+<h2>6.2 Middleware, validation and the five-layer write path</h2>
+
+<p><b>Middleware</b> is a function that runs before the handler. <span class="mono">requireMutationAccess</span> is the security middleware: it compares a shared secret header against configuration and returns 401 when it is absent or wrong. It exists because the API is intentionally reachable on localhost by the browser, but only the seller client and the scheduler should be able to change a status.</p>
+
+<p><b>Validation</b> lives in <span class="mono">lib/validation.js</span>, not in the route. <span class="mono">normalizeCreateShipment</span> checks the order ID is 32 bytes of hex, the tracking ID is non-empty and conforms to the expected pattern, the carrier is a string, and the seller address is a valid 20-byte hex address; it lowercases addresses so comparisons with chain data are reliable. <span class="mono">normalizeStatusUpdate</span> rejects unknown statuses. Rejecting bad input at the edge means every later layer can assume clean data — but each later layer still validates, because a service can be called from somewhere else tomorrow.</p>
+
+<h2>6.3 Registering a shipment: the real sequence</h2>
+
+<ol>
+  <li>Seller opens Incoming Escrows, selects a funded order, and enters a tracking ID such as <span class="mono">PPD-MACBOOK-001</span>.</li>
+  <li>The React app sends <span class="mono">POST /api/shipments</span> with the order ID, tracking ID, carrier label, its own address and a description, plus the mutation secret header.</li>
+  <li><span class="mono">register()</span> normalises the body, then calls <span class="mono">assertNoDuplicates</span>: no existing shipment with that tracking ID, none for that order.</li>
+  <li>It then calls <span class="mono">chainVerifier.verifyEscrow(orderId)</span>, a read-only RPC call to <span class="mono">getEscrow</span>.</li>
+  <li>Three chain-level facts are enforced: the escrow exists (404 if not), its status is 1 = <span class="mono">Funded</span> (409 if released/refunded), and its seller equals the registered seller address (409 <span class="mono">SELLER_MISMATCH</span>).</li>
+  <li>The duplicate checks run again — after the async RPC — to close the window in which two concurrent requests could both pass.</li>
+  <li>Finally the record is built with <span class="mono">status: "CREATED"</span>, <span class="mono">simulated: true</span>, timestamps from an injectable clock, and the first event in its history.</li>
+</ol>
+
+<p>Step 5 is the answer to "what stops a seller from registering a shipment for an order that does not exist?". The backend refuses, and even if it did not, the CRE workflow independently checks the escrow's status before reporting, and the receiver checks again before paying. Three layers, same fact.</p>
+
+<h2>6.4 State transitions, and why the API is strict</h2>
+
+<pre class="code">// backend/src/services/shipmentService.js
+export const SHIPMENT_TRANSITIONS = Object.freeze({
+  CREATED:    Object.freeze(['SHIPPED']),
+  SHIPPED:    Object.freeze(['IN_TRANSIT']),
+  IN_TRANSIT: Object.freeze(['DELIVERED', 'LOST']),
+  DELIVERED:  Object.freeze(['RETURNED']),   // simulation-only return path
+  LOST:       Object.freeze([]),
+  RETURNED:   Object.freeze([]),
+});</pre>
+
+<table class="tbl">
+  <caption>Table 6.2: The shipment lifecycle as enforced by the API</caption>
+  <thead><tr><th style="width:16%">Status</th><th style="width:24%">Allowed next</th><th style="width:60%">Meaning for the oracle</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">CREATED</span></td><td><span class="mono">SHIPPED</span></td><td>Registered, not dispatched. CRE reports nothing; the escrow stays funded.</td></tr>
+    <tr><td><span class="mono">SHIPPED</span></td><td><span class="mono">IN_TRANSIT</span></td><td>In the network. Still no settlement.</td></tr>
+    <tr><td><span class="mono">IN_TRANSIT</span></td><td><span class="mono">DELIVERED</span> or <span class="mono">LOST</span></td><td>The decision point. CRE now produces a report, and the escrow is still funded, so it is eligible.</td></tr>
+    <tr><td><span class="mono">DELIVERED</span></td><td><span class="mono">RETURNED</span> (simulation only)</td><td>CRE maps DELIVERED to RELEASE. If the escrow is already released, a later RETURNED produces no automatic action — the workflow routes it to manual review.</td></tr>
+    <tr><td><span class="mono">LOST</span></td><td>none</td><td>CRE maps LOST to REFUND; the escrow becomes Refunded and terminal.</td></tr>
+    <tr><td><span class="mono">RETURNED</span></td><td>none</td><td>Manual review only. No automatic report is generated, because a return after delivery is a dispute, not a courier fact.</td></tr>
+  </tbody>
+</table>
+
+<p>The transition table is validated inside the store's serialised updater. That detail matters: if the check happened before the async write, two concurrent PATCH requests could both read <span class="mono">IN_TRANSIT</span> and both apply <span class="mono">DELIVERED</span> and <span class="mono">LOST</span>, producing two contradictory events. Serialising the check and the write makes the transition atomic at the application level.</p>
+
+<h2>6.5 Persistence: one file, written carefully</h2>
+
+<p><span class="mono">shipmentStore.js</span> keeps the collection in memory and mirrors it to <span class="mono">backend/data/shipments.json</span>. Writes go to a temporary file and are then renamed over the target, so a crash mid-write cannot leave a truncated JSON document. Writes are serialised through a promise chain, so concurrent requests queue rather than interleave. Reads are served from memory, which is why the CRE HTTP call is cheap.</p>
+
+<p>This is not production storage, and the guide says so plainly: no indexing, no transactions across entities, no replication, no access control at rest. For a teaching project whose subject is the oracle pipeline, a single atomic file is the right trade — it makes the data source inspectable with <span class="mono">cat</span>, which is exactly what a viva needs.</p>
+
+<h2>6.6 Why seller registration is separate from escrow creation</h2>
+
+<p>They are different facts recorded by different parties on different systems. The escrow records a financial obligation: this buyer has locked this amount for this seller. The shipment record describes physical fulfilment: this parcel with this tracking number is moving. If registration were part of <span class="mono">createEscrow</span>, the buyer would have to know a tracking number that does not exist yet, and the escrow contract would have to store a string, paying permanent storage costs for data that changes six times.</p>
+
+<p>Separating them also creates the cross-check that makes the oracle meaningful: the backend verifies that the order is funded and that the seller matches before accepting a shipment. Neither system can lie alone; the chain supplies the financial fact, the API supplies the physical fact, and CRE is the component that joins them.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 6</span>
+  <p><b>Q.</b> "Why not put shipment status on chain?" <b>A.</b> Cost, mutability and privacy. Six status updates per order would cost gas each time, and a mis-scan would be permanent. Keeping it off chain means it can be corrected, while the money stays on chain where corrections are unnecessary.</p>
+  <p><b>Q.</b> "Who can fake a shipment?" <b>A.</b> Anyone holding the API's mutation secret, which is server-side only. But a fake status cannot move money unless the escrow is funded and unspent, and the settlement itself is limited to one payout per order by the receiver and the escrow.</p>
+</div>
+
+<h1 class="module"><span class="mtag">MODULE 7</span>CHAINLINK, ORACLES AND CRE FROM ZERO</h1>
+
+<p>This is the module that turns you from someone who used Chainlink into someone who can explain why it is necessary. Read it slowly.</p>
+
+<h2>7.1 The oracle problem, stated simply and then precisely</h2>
+
+<p>A smart contract is a sealed room: it can compute, it can read its own storage, and it can call other contracts, but it cannot look outside the blockchain. It has no network access, no clock beyond the block timestamp, and no way to ask "did the parcel arrive?". This is not an oversight; it is what makes consensus possible. Every node must compute the same answer, so every input must already be on chain.</p>
+
+<p>Therefore any fact about the real world has to be carried in by a transaction. The carrier is called an <b>oracle</b>. The <b>oracle problem</b> is: how do you get a trustworthy external fact into a system that cannot verify it, without reintroducing a single point of trust?</p>
+
+<table class="tbl">
+  <caption>Table 7.1: Off-chain facts versus on-chain facts in ProofPay</caption>
+  <thead><tr><th style="width:26%">Fact</th><th style="width:14%">Where it lives</th><th style="width:60%">Why there</th></tr></thead>
+  <tbody>
+    <tr><td>Buyer locked 3,499 pUSD for seller S</td><td>On chain (escrow storage)</td><td>It is the money. Must be tamper-proof and verifiable by both parties.</td></tr>
+    <tr><td>Shipment PPD-MACBOOK-001 is DELIVERED</td><td>Off chain (Express API)</td><td>It changes often, comes from an external process, and must be correctable.</td></tr>
+    <tr><td>Report says DELIVERED at 12:55:31Z</td><td>On chain (via receiver)</td><td>It is the evidence that justified moving money; it must be permanent.</td></tr>
+    <tr><td>Courier's internal scan history</td><td>Off chain</td><td>Voluminous, private, and irrelevant to the contract beyond the status.</td></tr>
+  </tbody>
+</table>
+
+<h2>7.2 What Chainlink is, and which parts this project actually uses</h2>
+
+<p>Chainlink is a network of independent node operators that deliver external data and computation to blockchains. A <b>node</b> runs software that can fetch APIs, sign results and submit transactions. A <b>DON</b> (decentralised oracle network) is a group of nodes that must agree on a result before it is reported, which removes the single-reporter assumption. <b>Consensus</b> in that context means the nodes independently fetch and compare, and only an agreed answer is accepted.</p>
+
+<table class="tbl">
+  <caption>Table 7.2: Chainlink products, and whether ProofPay uses them</caption>
+  <thead><tr><th style="width:23%">Product</th><th style="width:33%">What it does</th><th style="width:44%">Status in this project</th></tr></thead>
+  <tbody>
+    <tr><td>Price Feeds</td><td>Publishes market prices (ETH/USD, etc.) on chain.</td><td><b>Not used.</b> ProofPay has no price dependency; amounts are denominated in pUSD.</td></tr>
+    <tr><td>Automation (Keepers)</td><td>Runs a contract function when a condition is met.</td><td><b>Not used.</b> The scheduling here is a local cron inside the CRE workflow and the demo scheduler script.</td></tr>
+    <tr><td>Functions</td><td>Serverless JavaScript that returns a value on chain.</td><td><b>Not used.</b> Its model is a request/response callback; ProofPay needs a multi-step workflow with its own decision logic.</td></tr>
+    <tr><td>VRF / CCIP</td><td>Verifiable randomness / cross-chain messaging.</td><td><b>Not used.</b></td></tr>
+    <tr><td><b>CRE (Compute Runtime Environment)</b></td><td>Workflows written in TypeScript that fetch HTTP, read EVM state, compute, and produce signed reports for a receiver contract.</td><td><b>Used, and executed locally through the official CLI simulator.</b> The on-chain write path is disabled by <span class="mono">dryRun: true</span> and no DON is deployed.</td></tr>
+  </tbody>
+</table>
+
+<p>Why CRE rather than a price feed? Because the task is not "read a number someone else publishes"; it is "fetch my own API, check my own contract, apply my own rule, and produce a report my contract can verify". CRE is the product that supports arbitrary workflow logic with both HTTP and EVM capabilities, which is exactly the shape of the problem.</p>
+
+<h2>7.3 The CRE concepts you must be able to define</h2>
+
+<table class="tbl">
+  <caption>Table 7.3: CRE vocabulary, anchored in main.ts</caption>
+  <thead><tr><th style="width:22%">Term</th><th style="width:40%">Meaning</th><th style="width:38%">Where it appears</th></tr></thead>
+  <tbody>
+    <tr><td>Workflow</td><td>A TypeScript program with a trigger and a handler; deployed to a DON or run in the simulator.</td><td><span class="mono">shipment-workflow/main.ts</span>, registered by <span class="mono">initWorkflow()</span>.</td></tr>
+    <tr><td>Trigger</td><td>What starts a run. Here, a cron schedule.</td><td><span class="mono">new CronCapability()</span> with <span class="mono">"0 */5 * * * *"</span> (every five minutes).</td></tr>
+    <tr><td>HTTP capability</td><td>The workflow's way to call the internet, with optional consensus across nodes.</td><td><span class="mono">new HTTPClient()</span> + <span class="mono">sendRequest</span> wrapped in <span class="mono">consensusIdenticalAggregation&lt;string&gt;()</span>.</td></tr>
+    <tr><td>EVM capability</td><td>Reads (and, when enabled, writes) to a chain selected by a CRE chain selector.</td><td><span class="mono">new EVMClient(network.chainSelector.selector)</span>; <span class="mono">callContract(...)</span>.</td></tr>
+    <tr><td>Runtime</td><td>The object giving config, logging and <span class="mono">runtime.report()</span>.</td><td><span class="mono">Runtime&lt;Config&gt;</span>, used for <span class="mono">runtime.log</span> and <span class="mono">runtime.config</span>.</td></tr>
+    <tr><td>Report</td><td>The encoded payload plus a runtime metadata header, produced by the SDK and verifiable on chain.</td><td><span class="mono">runtime.report(prepareReportRequest(payload)).result()</span>.</td></tr>
+    <tr><td><span class="mono">writeReport</span></td><td>The call that would submit the report to a receiver on a supported chain.</td><td>Present in the code but unreachable while <span class="mono">dryRun</span> is true.</td></tr>
+    <tr><td>Simulation</td><td>Running the workflow locally with the CLI, one node, real code.</td><td><span class="mono">cre workflow simulate shipment-workflow --target staging-settings --trigger-index 0 --non-interactive</span>.</td></tr>
+    <tr><td>Deployment</td><td>Registering the workflow with a DON so it runs on a schedule with consensus.</td><td><b>Not performed in this project.</b></td></tr>
+  </tbody>
+</table>
+
+<h2>7.4 main.ts, stage by stage, with the real code</h2>
+
+<p>The workflow is one handler. Read the following in the order it executes; each block is quoted from <span class="mono">chainlink/cre/shipment-workflow/main.ts</span>.</p>
+
+<h3>Stage 1 — configuration and the decision table</h3>
+
+<pre class="code">export type Config = {
+  shipmentApiBaseUrl: string; shipmentApiPath: string; rpcUrl: string; chainId: number;
+  escrowContractAddress: string; receiverContractAddress: string;
+  forwarderAddress: string; dryRun: boolean;
+};
+const ESCROW_STATUS_FUNDED = 1;</pre>
+
+<p>Configuration is supplied per target by <span class="mono">config.staging.json</span>, validated by zod in <span class="mono">config.ts</span>. The staging file sets the API base to <span class="mono">http://localhost:5001</span>, the chain ID to 31337, the escrow and receiver addresses to the deployed ones, the forwarder to the zero address, and <span class="mono">dryRun: true</span>. <span class="mono">config.production.json</span> exists and was left untouched.</p>
+
+<pre class="code">function shouldSettle(shipment: { status: string }): SettlementDecision {
+  switch (shipment.status) {
+    case "DELIVERED": return { action: "RELEASE", outcome: "DELIVERED", reason: "..." };
+    case "LOST":      return { action: "REFUND",  outcome: "LOST",      reason: "..." };
+    case "IN_TRANSIT":
+    case "SHIPPED":   return { action: "NONE",    reason: "payment remains locked" };
+    case "RETURNED":  return { action: "MANUAL_REVIEW", reason: "requires manual review" };
+    case "CREATED":   return { action: "NONE",    reason: "not ready for settlement" };
+    default:          return { action: "NONE",    reason: `Unknown shipment status: ${shipment.status}` };
+  }
+}</pre>
+
+<p>This function is the project's entire settlement policy, and it lives in exactly one place. The bridge has no copy of it. If an interviewer asks "where is the decision made?", point here.</p>
+
+<h3>Stage 2 — fetch the shipment list over HTTP, with consensus aggregation</h3>
+
+<pre class="code">const httpClient = new HTTPClient();
+const responseBody = httpClient
+  .sendRequest(runtime, fetchShipments, consensusIdenticalAggregation&lt;string&gt;())(runtime.config)
+  .result();
+
+const fetchShipments = (sendRequester: HTTPSendRequester, config: Config): string =&gt; {
+  const url = `${config.shipmentApiBaseUrl}${config.shipmentApiPath}`;
+  const response = sendRequester.sendRequest({ url, method: "GET" }).result();
+  if (!ok(response)) throw new Error(`HTTP request failed with status: ${response.statusCode}`);
+  return text(response);
+};</pre>
+
+<p>Three things to notice. The request is wrapped in <span class="mono">consensusIdenticalAggregation&lt;string&gt;()</span>, which in a DON deployment means every node fetches and the results must be byte-identical before the workflow continues — that is how a single lying node is outvoted. In the local simulator there is one node, so the consensus wrapper is exercised but proves nothing; say that honestly. Second, failures throw, and the handler catches them and returns an error string, so a dead API results in "HTTP error" and zero settlements rather than a partial run. Third, the body is treated as untrusted text and parsed defensively:</p>
+
+<pre class="code">let shipments: any[] = [];
+if (Array.isArray(parsed)) shipments = parsed;
+else if (parsed &amp;&amp; typeof parsed === "object" &amp;&amp; "shipments" in parsed &amp;&amp; Array.isArray(parsed.shipments))
+  shipments = parsed.shipments;
+else return "No shipments";</pre>
+
+<h3>Stage 3 — read the escrow on chain before believing the shipment</h3>
+
+<pre class="code">const network = getNetwork({ chainFamily: "evm", chainSelectorName: "ethereum-testnet-sepolia", isTestnet: true });
+const evmClient = new EVMClient(network.chainSelector.selector);
+
+const callData = encodeFunctionData({ abi: ESCROW_ABI, functionName: "getEscrow", args: [orderIdBytes32] });
+const callMsg = encodeCallMsg({ from: zeroAddress, to: config.escrowContractAddress, data: callData });
+const evmResp = evmClient.callContract(runtime, { call: callMsg, blockNumber: LAST_FINALIZED_BLOCK_NUMBER }).result();
+const escrow = decodeFunctionResult({ abi: ESCROW_ABI, functionName: "getEscrow", data: bytesToHex(evmResp.data) });
+if (escrow.status !== ESCROW_STATUS_FUNDED) { runtime.log("Escrow not funded..."); continue; }</pre>
+
+<p>This is the cross-check that makes the design sound: the API claims a shipment status, the chain proves whether money is still held. Both must agree before a report exists. <span class="mono">LAST_FINALIZED_BLOCK_NUMBER</span> is used rather than "latest" so the read is from a settled block, not a tip that could be reorganised.</p>
+
+<div class="box warn">
+  <span class="lbl">The chain-selector limitation, stated exactly</span>
+  <p><span class="mono">getNetwork</span> is called with <span class="mono">ethereum-testnet-sepolia</span> because the installed SDK (1.23.0) exposes no chain selector for a local Hardhat node on chain ID 31337. The EVM read therefore does not point at Hardhat through that abstraction. This is precisely why the local execution bridge exists, and why this project must never be described as having executed a CRE write against Hardhat. CRE's read is performed against the configured RPC in the local workflow path used here, and the write path is disabled entirely.</p>
+</div>
+
+<h3>Stage 4 — build and generate the report</h3>
+
+<pre class="code">const observedAt = shipment.updatedAt || shipment.createdAt || "2026-11-01T00:00:00.000Z";
+const trackingIdHash = keccak256(toHex(shipment.trackingId));
+const reportPayload = createReportPayload(shipment.orderId, decision.outcome, shipment.trackingId, observedAt);
+const reportRequest = prepareReportRequest(reportPayload);
+const report = runtime.report(reportRequest).result();</pre>
+
+<p><span class="mono">createReportPayload</span> does the ABI encoding:</p>
+
+<pre class="code">const orderIdBytes32 = (orderIdHex.padEnd(66, "0").slice(0, 66)) as Hex;
+const trackingIdHash = keccak256(toHex(trackingId));
+return encodeAbiParameters(parseAbiParameters("bytes32, string, bytes32, string"),
+  [orderIdBytes32, outcome, trackingIdHash, observedAt]);</pre>
+
+<table class="tbl">
+  <caption>Table 7.4: The four report fields, and why each exists</caption>
+  <thead><tr><th style="width:20%">Field</th><th style="width:14%">Type</th><th style="width:66%">Why it is in the report</th></tr></thead>
+  <tbody>
+    <tr><td>orderId</td><td><span class="mono">bytes32</span></td><td>Identifies which escrow to pay. The receiver decodes it and passes it to the escrow.</td></tr>
+    <tr><td>outcome</td><td><span class="mono">string</span></td><td>"DELIVERED" or "LOST". The receiver accepts only these two and maps them to the two settlement calls.</td></tr>
+    <tr><td>trackingIdHash</td><td><span class="mono">bytes32</span></td><td>Evidence of which tracking record produced the decision, without publishing the tracking number. Part of the report ID.</td></tr>
+    <tr><td>observedAt</td><td><span class="mono">string</span></td><td>When the courier record was last updated. Distinguishes two reports about the same order and makes the audit trail time-specific.</td></tr>
+  </tbody>
+</table>
+
+<h3>Stage 5 — extract the exact bytes, and prove they are the right bytes</h3>
+
+<p>The SDK prefixes a 109-byte metadata header to the encoded body. The receiver decodes the body only, so sending the raw report would corrupt the first field. The workflow therefore tries both candidates and accepts the one that decodes to the expected order and outcome:</p>
+
+<pre class="code">const creRawReportHex = bytesToHex(report.rawReport());
+const bodyBytes = report.body();
+if (bodyBytes &amp;&amp; isExpectedAbiPayload(bodyBytes, orderIdBytes32, outcome))
+  return { payloadHex: bytesToHex(bodyBytes), payloadSource: "body", creRawReportHex };
+if (isExpectedAbiPayload(report.rawReport(), orderIdBytes32, outcome))
+  return { payloadHex: creRawReportHex, payloadSource: "rawReport", creRawReportHex };
+return { payloadHex: creRawReportHex, payloadSource: "unverified", creRawReportHex };</pre>
+
+<p>In every observed run the source was <span class="mono">body</span>, the payload was 256 bytes, the raw report 365 bytes, and 365 &minus; 256 = 109 exactly matches <span class="mono">REPORT_METADATA_HEADER_LENGTH</span>. That arithmetic is the cleanest evidence that the header was stripped correctly, and it is the kind of detail that makes an interviewer believe you built the thing.</p>
+
+<h3>Stage 6 — emit the structured records, then honour dry-run</h3>
+
+<pre class="code">runtime.log(`${REPORT_LOG_PREFIX}${JSON.stringify({
+  type: "report", orderId, outcome: decision.outcome, trackingId: shipment.trackingId,
+  observedAt, metadata: "0x", report: payloadHex })}`);
+
+runtime.log(`${REPORT_LOG_PREFIX}${JSON.stringify({
+  type: "meta", orderId, action: decision.action, trackingIdHash, reportSource: payloadSource,
+  reportDecodesToReceiverAbi: payloadSource !== "unverified", creRawReportLength,
+  creMetadataHeaderLength: REPORT_METADATA_HEADER_LENGTH, creRawReportHash,
+  receiver: config.receiverContractAddress, escrow: config.escrowContractAddress,
+  creDryRun: config.dryRun })}`);
+
+if (config.dryRun) { runtime.log("DRY RUN: ... CRE write skipped"); continue; }</pre>
+
+<p>The sequencing is the single most important repair in the project's history. In the original code the <span class="mono">dryRun</span> check came <i>before</i> <span class="mono">runtime.report</span>, so with dry-run enabled — the safe setting — no report object was ever produced and nothing could be captured. Moving generation above the branch is what made the entire local pipeline possible: the report exists in both modes, and only its on-chain destination is conditional.</p>
+
+<p>The two log lines exist because the CRE runtime truncates user log lines at roughly one kilobyte. The payload alone is 512 hex characters, so provenance is emitted separately and the bridge rejoins the two records by order ID. That constraint, and the workaround, is a good story about reading your tools' limits instead of fighting them.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 7</span>
+  <p><b>Q.</b> "Why hash the tracking ID?" <b>A.</b> Two reasons: the hash ties the settlement to a specific courier record as evidence, and it avoids publishing the tracking number on a public ledger, which would leak shipping details. The receiver stores it only as part of the report ID.</p>
+  <p><b>Q.</b> "Does consensus aggregation prove your oracle is decentralised?" <b>A.</b> No. The code is written for it, but in this deployment the simulator runs one node, so no independent agreement happens. Real decentralisation requires the workflow deployed to a DON with multiple operators, which was out of scope.</p>
+</div>

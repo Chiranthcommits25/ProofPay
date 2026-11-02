@@ -1,0 +1,181 @@
+<h1 class="module"><span class="mtag">MODULE 11</span>SECURITY AND DESIGN DECISIONS, DEFENDED</h1>
+
+<p>Interviewers rarely ask "what does this function do?" — that is in the code. They ask "why is it built this way, and what did you give up?". This module answers that question thirteen times, using a fixed structure so the answers become habit: what we chose, why, what the alternatives were, why we rejected them, and what the trade-off costs.</p>
+
+<h2>11.1 Threat model first</h2>
+
+<table class="tbl">
+  <caption>Table 11.1: Who might attack what, and which control answers it</caption>
+  <thead><tr><th style="width:24%">Adversary</th><th style="width:34%">Capability</th><th style="width:42%">Control that limits them</th></tr></thead>
+  <tbody>
+    <tr><td>Buyer</td><td>Funds orders, controls their own key, can call any contract function.</td><td>Cannot withdraw after funding; cannot settle, because settlement is <span class="mono">onlyOracle</span>; cannot fund in someone else's name.</td></tr>
+    <tr><td>Seller</td><td>Registers shipments, controls the courier record through the API secret.</td><td>Can mark a parcel delivered, but cannot move money; settlement still requires a funded escrow, one payout, and the receiver's checks.</td></tr>
+    <tr><td>Admin / oracle operator</td><td>Owns contracts, configures addresses, holds the manual-oracle role.</td><td>Can rotate the oracle (visible via events) but has no function that transfers escrowed funds to an arbitrary address.</td></tr>
+    <tr><td>Bridge operator</td><td>Runs the relay, chooses which reports to submit.</td><td>Cannot invent a valid report that the workflow did not produce without also forging the fields the receiver hashes; cannot replay; cannot settle twice.</td></tr>
+    <tr><td>Network observer</td><td>Reads everything on chain.</td><td>Sees amounts and addresses, but only a hash of the tracking ID — a deliberate privacy choice.</td></tr>
+  </tbody>
+</table>
+
+<h2>11.2 Thirteen decisions, each defended</h2>
+
+<h3>1. An escrow contract instead of paying the seller directly</h3>
+<p><b>Chosen.</b> Buyer deposits to <span class="mono">ProofPayEscrow</span>; the seller is paid only on an oracle-authorised delivery. <b>Why.</b> The product being sold is protection; without custody there is nothing to protect. <b>Alternatives.</b> Direct payment with a refund process; a marketplace holding funds; a payment channel. <b>Rejected because.</b> Direct payment makes the buyer chase a refund from an unwilling seller; a marketplace reintroduces the trusted intermediary; channels solve streaming, not conditional sales. <b>Trade-off.</b> Funds can be stuck if the oracle never fires, and the buyer's capital is illiquid for the order's duration — accepted, because "stuck" is recoverable and "drained" is not.</p>
+
+<h3>2. A dedicated ERC-20 (pUSD) instead of ETH or a real stablecoin</h3>
+<p><b>Chosen.</b> A 16-line ERC-20 with 18 decimals and owner-only mint. <b>Why.</b> It separates the value under protection from gas; it makes amounts exact in integers; it lets the demonstration mint balances on demand. <b>Alternatives.</b> Pay in ETH; integrate USDC/DAI; accept multiple tokens. <b>Rejected because.</b> ETH-denominated escrow conflates fees with principal and makes the demonstration's numbers unstable; integrating a real stablecoin adds external dependencies and regulatory claims the project cannot support; multi-token support multiplies accounting paths. <b>Trade-off.</b> pUSD is not money — no reserve, no peg, no redemption — so every claim about it must be scoped to "prototype token", which the report and this guide both do.</p>
+
+<h3>3. A separate receiver contract in front of the escrow</h3>
+<p><b>Chosen.</b> <span class="mono">ProofPayCREReceiver</span> holds authorisation, decoding, replay protection and outcome mapping; the escrow only pays. <b>Why.</b> The receiver is the standard interface a DON calls, and isolating report handling keeps the custody contract small enough to review line by line. <b>Alternatives.</b> Put <span class="mono">onReport</span> directly on the escrow; let the escrow accept (orderId, outcome) from an EOA. <b>Rejected because.</b> Merging them would force the escrow to import ABI-decoding and replay logic, enlarging the attack surface of the contract that holds money; the EOA variant collapses the oracle back to a single trusted key with no provenance. <b>Trade-off.</b> One more deployment, one more address to configure, and about 51,000 extra gas per settlement (122,471 versus 71,186 for a direct call) — a fixed cost that buys auditable report handling.</p>
+
+<h3>4. Three roles: owner, forwarder, manualOracle</h3>
+<p><b>Chosen.</b> Ownership configures; the forwarder is the intended automated reporter; <span class="mono">manualOracle</span> is a deliberate local and break-glass path. <b>Why.</b> Separating configuration from settlement means the key that can change addresses is not the key that moves money in normal operation. <b>Alternatives.</b> A single admin role; no manual path at all. <b>Rejected because.</b> One role concentrates risk; no manual path makes the system untestable locally and unrecoverable if the oracle dies. <b>Trade-off.</b> A local deployment with a zero forwarder lets the owner settle through the third branch of <span class="mono">onlyAuthorized</span> — a real weakening, documented in the code, the report and Module 12, and removed by setting a forwarder in production.</p>
+
+<h3>5. Chainlink CRE instead of a custom Node script that settles orders</h3>
+<p><b>Chosen.</b> The decision lives in a CRE workflow with HTTP and EVM capabilities, report encoding and structured output. <b>Why.</b> The workflow is the component designed for exactly this: fetch external data, read chain state, compute, produce a report a contract can act on — and it is portable to a DON. <b>Alternatives.</b> A cron job holding a key and calling <span class="mono">confirmDelivery</span>; Chainlink Automation; Chainlink Functions. <b>Rejected because.</b> A key-holding script is a single trusted signer with no report artefact and no path to decentralisation; Automation triggers existing functions rather than running arbitrary multi-source logic; Functions is a request/response value fetch, not a workflow with its own decision table and report. <b>Trade-off.</b> CRE's chain-selector support and DON availability constrain the local deployment, which is the sole reason the bridge exists.</p>
+
+<h3>6. A local execution bridge instead of waiting for DON access</h3>
+<p><b>Chosen.</b> Run the official simulator with <span class="mono">dryRun: true</span> and relay the resulting report locally. <b>Why.</b> It lets the whole pipeline be built, tested and measured now, while keeping CRE as the only decision-maker. <b>Alternatives.</b> Skip on-chain settlement entirely; fake the settlement in the UI; write a mock oracle that decides on its own. <b>Rejected because.</b> Skipping settlement makes the project a diagram; faking it in the UI would be dishonest; a self-deciding mock oracle would move the policy out of CRE and invalidate the architecture's central claim. <b>Trade-off.</b> The trust model is weaker than a DON: one machine runs the simulation and one account submits. That limitation is stated in the code header, the report and Module 8 rather than hidden.</p>
+
+<h3>7. The four-field report payload</h3>
+<p><b>Chosen.</b> <span class="mono">(bytes32 orderId, string outcome, bytes32 trackingIdHash, string observedAt)</span>. <b>Why.</b> The order identifies the escrow; the outcome selects the payout; the tracking hash ties the decision to evidence without publishing the tracking number; the timestamp distinguishes two reports and dates the observation. <b>Alternatives.</b> Just <span class="mono">(orderId, outcome)</span>; include the full tracking ID; include the courier's raw JSON. <b>Rejected because.</b> Two fields give no provenance and make replay IDs ambiguous; the raw tracking ID leaks shipping data on a public ledger; the raw JSON is unbounded, expensive and unparseable on chain. <b>Trade-off.</b> The receiver cannot independently reconstruct the decision — it trusts CRE's outcome and can only check authorisation and uniqueness. That is inherent to any oracle design; the mitigation is the report's provenance record plus on-chain replay protection.</p>
+
+<h3>8. Two mappings: processedReports and orderSettled</h3>
+<p><b>Chosen.</b> One keyed on a hash of the full report, one on the order. <b>Why.</b> They block different attacks: identical replay versus a fresh-looking report on an already-paid order. <b>Alternatives.</b> Only the order mapping; only the report mapping. <b>Rejected because.</b> With only the report mapping, an attacker who changes one character of the timestamp gets a new ID and a second payout attempt (stopped only by the escrow); with only the order mapping, you lose the audit record of which report settled which order. <b>Trade-off.</b> Two storage writes per settlement, roughly 40,000 gas — trivial against the value protected.</p>
+
+<h3>9. Terminal states with no exit</h3>
+<p><b>Chosen.</b> <span class="mono">Released</span> and <span class="mono">Refunded</span> are final; no function reverses them; no owner rescue. <b>Why.</b> Reversibility is the property an attacker wants and the property a payment system must not have. <b>Alternatives.</b> An admin <span class="mono">reverseSettlement</span>; a pause function; an upgrade proxy. <b>Rejected because.</b> Each creates a privileged path to move money and a governance question the project cannot answer; an upgrade proxy would make "code is law" conditional. <b>Trade-off.</b> Mistakes are permanent. The mitigation is that mistakes are prevented upstream: preflight, allowlist, dry-run defaults and 31 tests.</p>
+
+<h3>10. Shipment state kept off chain</h3>
+<p><b>Chosen.</b> Express + JSON persistence, read by CRE over HTTP. <b>Why.</b> Status changes six times per order, comes from an external process, and must be correctable. <b>Alternatives.</b> Store status on chain via an oracle write per update; use IPFS; use an event-sourced log on chain. <b>Rejected because.</b> Six paid writes per order is wasteful and every mis-scan becomes permanent; IPFS is content-addressed and awkward for mutable state; on-chain event sourcing has the same cost problem. <b>Trade-off.</b> The API becomes the trust boundary, mitigated by validating it against the escrow on chain before any payout.</p>
+
+<h3>11. The <span class="mono">-LOST</span> tracking-ID convention in the scheduler</h3>
+<p><b>Chosen.</b> A demo scheduler derives the terminal status from the tracking ID suffix. <b>Why.</b> It makes a self-driving demo deterministic with no extra configuration. <b>Alternatives.</b> A random outcome; a config file per shipment; an admin click. <b>Rejected because.</b> Randomness makes demonstrations unrepeatable; per-shipment configuration is clumsy; an admin click defeats the point of automation. <b>Trade-off.</b> It is a courier-fact convention, not a settlement rule, and could be mistaken for one — hence the explicit comment in the file and this paragraph.</p>
+
+<h3>12. Dry-run defaults and the order allowlist</h3>
+<p><b>Chosen.</b> <span class="mono">LOCAL_BRIDGE_DRY_RUN=true</span> by default; <span class="mono">BRIDGE_ORDER_ALLOWLIST</span> optionally restricts a run to named orders; CRE's own <span class="mono">dryRun</span> stays true. <b>Why.</b> Two independent keys before money moves, and a scope control that prevents a legitimate multi-report run from settling orders you did not intend. <b>Alternatives.</b> One flag; no allowlist; a confirmation prompt. <b>Rejected because.</b> One flag is one mistake away from an unintended transaction; without an allowlist the lost-order run would have settled two orders instead of one; a prompt cannot be used in a scheduler. <b>Trade-off.</b> More configuration to explain, and a user who forgets to set the flag sees a "planned" transaction instead of a real one — which the logs state plainly.</p>
+
+<h3>13. No private key in the repository</h3>
+<p><b>Chosen.</b> The bridge sends <span class="mono">eth_sendTransaction</span> from Hardhat's unlocked account. <b>Why.</b> A settlement key on disk is the single most valuable file an attacker could find. <b>Alternatives.</b> A <span class="mono">CRE_ADMIN_PRIVATE_KEY</span> in <span class="mono">.env</span>; a keystore file; a hardware wallet. <b>Rejected because.</b> An env key is trivially leaked by a screenshot, a commit or a log; a keystore still needs a password on disk; hardware signing is impossible for an unattended scheduler. <b>Trade-off.</b> The design only works on a node whose accounts are unlocked, i.e. a local development chain. A production deployment would use a KMS or a dedicated signer service, and the guide says so rather than implying the local pattern is production-ready.</p>
+
+<h2>11.3 The limitations to volunteer, not hide</h2>
+
+<table class="tbl">
+  <caption>Table 11.2: Honest limitations and the precise wording to use</caption>
+  <thead><tr><th style="width:30%">Limitation</th><th style="width:70%">How to say it</th></tr></thead>
+  <tbody>
+    <tr><td>Local chain only</td><td>"Everything runs on Hardhat Local, chain ID 31337; no public testnet or mainnet deployment exists, so there is no explorer history to point at."</td></tr>
+    <tr><td>No DON</td><td>"The CRE workflow runs in the official CLI simulator with dry-run enabled; it is real workflow execution, not DON execution."</td></tr>
+    <tr><td>Simulated courier</td><td>"The courier is a script; there is no DHL or FedEx integration. The API has the shape a real carrier integration would need."</td></tr>
+    <tr><td>Bridge trust</td><td>"One machine relays the report. It cannot change the decision, but it could suppress or forge one; the receiver's checks bound the damage to one payout per funded order."</td></tr>
+    <tr><td>Prototype token</td><td>"pUSD has no reserve or peg. It exists so the escrow has a unit of account separate from gas."</td></tr>
+    <tr><td>No audit</td><td>"No third-party audit or formal verification. The mitigations are a small contract surface, OpenZeppelin primitives and 31 tests."</td></tr>
+    <tr><td>Owner fallback in the receiver</td><td>"When no forwarder is configured, the owner can settle. That is a local convenience and would be removed in production."</td></tr>
+    <tr><td>Infrastructure</td><td>"JSON file storage, a shared-secret header instead of real authentication, unlocked accounts. Development-grade by design."</td></tr>
+  </tbody>
+</table>
+
+<h1 class="module"><span class="mtag">MODULE 12</span>DEBUGGING AND TROUBLESHOOTING HANDBOOK</h1>
+
+<p>Every entry below is a failure you can actually hit in this project, in roughly the order you will hit them. The pattern is always the same: identify which layer owns the failure, then read the exact error rather than guessing.</p>
+
+<h2>12.1 How to read an error</h2>
+
+<p>Four sources of truth, in this order. The browser console shows the raw provider error object with a <span class="mono">code</span> and often a decoded revert. The MetaMask activity tab shows what was signed and its status. The node console shows the transaction and any revert reason. The receipt, fetched by hash, tells you definitively whether it succeeded (<span class="mono">status: 1</span>) or reverted (<span class="mono">status: 0</span>). Never diagnose from a toast notification.</p>
+
+<h2>12.2 Wallet, network and gas</h2>
+
+<table class="tbl">
+  <caption>Table 12.1: Wallet and network problems</caption>
+  <thead><tr><th style="width:19%">Symptom</th><th style="width:27%">Cause</th><th style="width:27%">How to confirm</th><th style="width:27%">Fix</th></tr></thead>
+  <tbody>
+    <tr><td>"MetaMask was not detected"</td><td>Extension missing or disabled; page loaded before injection.</td><td>In console: <span class="mono">typeof window.ethereum</span> is <span class="mono">undefined</span>.</td><td>Install/enable, reload the page. Note the app also reports this state in <span class="mono">hasProvider</span>.</td></tr>
+    <tr><td>Connect does nothing</td><td>User rejected the request, or the tab was never focused.</td><td>Provider error code <span class="mono">4001</span>.</td><td>Click connect again; treat 4001 as a rejection, not a bug.</td></tr>
+    <tr><td>Red "wrong network" banner; no write buttons</td><td>Wallet on mainnet or another chain.</td><td>Header shows a chain other than Hardhat Local; <span class="mono">wallet.chainId !== 31337</span>.</td><td>Use the app's switch button, or add chain 31337 manually with RPC <span class="mono">http://127.0.0.1:8545</span>.</td></tr>
+    <tr><td>Switch fails with code 4902</td><td>The chain is not configured in MetaMask.</td><td>Error code 4902.</td><td><span class="mono">useWallet.switchToHardhatLocal</span> then calls <span class="mono">wallet_addEthereumChain</span>; approve it.</td></tr>
+    <tr><td>"Insufficient funds for gas"</td><td>Account has no test ETH.</td><td>Header ETH balance is 0.</td><td>Use a Hardhat account; they start with 10,000 ETH. Never send real ETH.</td></tr>
+    <tr><td>Transaction pending forever</td><td>Nonce gap or gas price too low.</td><td>Pending transaction visible in the wallet; node never mined it.</td><td>Restart the local node (which erases state — read 12.7 first) or reset the account's activity in MetaMask.</td></tr>
+  </tbody>
+</table>
+
+<h2>12.3 Token and escrow problems</h2>
+
+<table class="tbl">
+  <caption>Table 12.2: Funding and settlement errors, decoded</caption>
+  <thead><tr><th style="width:22%">Error</th><th style="width:30%">Meaning</th><th style="width:48%">Fix</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">ERC20InsufficientAllowance(spender, allowance, needed)</span></td><td>The escrow was not approved for this amount, or the approval was consumed by an earlier order.</td><td>Run <span class="mono">approve(escrow, amount)</span> again. ProofPay approves the exact amount, so a second purchase needs a second approval.</td></tr>
+    <tr><td><span class="mono">ERC20InsufficientBalance(sender, balance, needed)</span></td><td>Not enough pUSD.</td><td>Mint to the buyer from the admin account, or fund from an account that has pUSD. Check decimals: 3,499 pUSD is 3499e18.</td></tr>
+    <tr><td><span class="mono">EscrowAlreadyExists(orderId)</span></td><td>That 32-byte ID is already used.</td><td>Generate a fresh random order ID; never reuse one from a previous run.</td></tr>
+    <tr><td><span class="mono">InvalidBuyer()</span></td><td>The <span class="mono">buyer</span> argument is not <span class="mono">msg.sender</span>.</td><td>Pass the connected wallet address, not a hard-coded one.</td></tr>
+    <tr><td><span class="mono">SameBuyerAndSeller()</span></td><td>Buyer and seller are the same address.</td><td>Use the seller account <span class="mono">0x3C44…93BC</span>; the checkout also blocks self-payment in the UI.</td></tr>
+    <tr><td><span class="mono">EscrowNotFound(orderId)</span></td><td>No escrow for that ID on this chain.</td><td>Usually a restart-wiped chain or a wrong order ID; redeploy and re-fund (12.7).</td></tr>
+    <tr><td><span class="mono">EscrowNotFunded(orderId)</span></td><td>Already released or refunded.</td><td>Expected behaviour on a duplicate attempt. Verify with <span class="mono">getEscrow</span> before retrying anything.</td></tr>
+    <tr><td><span class="mono">UnauthorizedOracle(caller)</span></td><td>Caller is not <span class="mono">escrow.oracle()</span>.</td><td>Do not call settlement directly. Configure <span class="mono">escrow.setOracle(receiver)</span> and go through the receiver.</td></tr>
+  </tbody>
+</table>
+
+<h2>12.4 Receiver and oracle problems</h2>
+
+<table class="tbl">
+  <caption>Table 12.3: Receiver-side failures</caption>
+  <thead><tr><th style="width:24%">Error / symptom</th><th style="width:30%">Cause</th><th style="width:46%">Fix</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">UnauthorizedCaller(caller)</span></td><td>Sender is neither forwarder, manual oracle, nor owner-with-no-forwarder.</td><td>Use the admin account, or set <span class="mono">manualOracle</span> to the account you are using. The admin panel shows both addresses so this is checkable before sending.</td></tr>
+    <tr><td><span class="mono">ReportAlreadyProcessed(reportId)</span></td><td>Identical bytes were already submitted.</td><td>Correct behaviour. Check the state file and the receiver mapping; do not resubmit.</td></tr>
+    <tr><td><span class="mono">OrderAlreadySettled(orderId)</span></td><td>A different report for an already-paid order.</td><td>Also correct behaviour. The order is terminal; investigate why CRE produced a second report (usually a stale shipment record).</td></tr>
+    <tr><td><span class="mono">UnsupportedOutcome(outcome)</span></td><td>Outcome string is not DELIVERED or LOST, e.g. MANUAL_REVIEW.</td><td>The workflow should never emit that; if it does, fix <span class="mono">shouldSettle</span> usage rather than widening the receiver.</td></tr>
+    <tr><td>Decode revert / <span class="mono">InvalidReportData</span></td><td>Wrong bytes: the SDK metadata header was not stripped, or fields are in the wrong order.</td><td>Verify with the bridge's own decode check; confirm the payload is the 256-byte body, not the 365-byte raw report.</td></tr>
+    <tr><td>Receiver address is null in the UI</td><td><span class="mono">VITE_RECEIVER_CONTRACT_ADDRESS</span> missing or malformed.</td><td>Set it in <span class="mono">frontend/.env</span> to <span class="mono">0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e</span> for this deployment and restart Vite.</td></tr>
+  </tbody>
+</table>
+
+<h2>12.5 Shipment API problems</h2>
+
+<table class="tbl">
+  <caption>Table 12.4: Backend failures and their status codes</caption>
+  <thead><tr><th style="width:26%">Response</th><th style="width:32%">Meaning</th><th style="width:42%">Fix</th></tr></thead>
+  <tbody>
+    <tr><td>401 from POST or PATCH</td><td>Mutation secret missing or wrong.</td><td>Send the configured secret header; the seller client already does. Check the backend's config, never commit the value.</td></tr>
+    <tr><td>409 <span class="mono">INVALID_STATUS_TRANSITION</span></td><td>Illegal move, e.g. CREATED → DELIVERED.</td><td>Follow <span class="mono">SHIPMENT_TRANSITIONS</span>; the response body lists <span class="mono">allowed</span>.</td></tr>
+    <tr><td>409 <span class="mono">ESCROW_NOT_FUNDED</span></td><td>The on-chain escrow is released or refunded.</td><td>Register against a funded order; check <span class="mono">getEscrow</span>.</td></tr>
+    <tr><td>409 <span class="mono">SELLER_MISMATCH</span></td><td>The seller address in the request is not the escrow's seller.</td><td>Connect the seller account that actually owns the order.</td></tr>
+    <tr><td>409 <span class="mono">DUPLICATE_TRACKING_ID</span> / <span class="mono">SHIPMENT_ALREADY_EXISTS</span></td><td>Tracking ID or order already registered.</td><td>Use a new tracking ID per shipment; one shipment per order.</td></tr>
+    <tr><td>404 <span class="mono">ESCROW_NOT_FOUND</span></td><td>Order ID has no escrow on chain.</td><td>Usually after a node restart; redeploy and re-fund.</td></tr>
+    <tr><td>API unreachable (network error)</td><td>Backend not running or wrong port.</td><td>Start it on 5001; confirm with <span class="mono">curl http://localhost:5001/api/shipments</span>.</td></tr>
+    <tr><td>Scheduler says "no shipments in flight"</td><td>All managed shipments are terminal, or their tracking IDs do not start with <span class="mono">PPD-</span>.</td><td>Register a new <span class="mono">PPD-</span> shipment against a funded order; the scheduler only advances matching records.</td></tr>
+  </tbody>
+</table>
+
+<h2>12.6 CRE and bridge problems</h2>
+
+<table class="tbl">
+  <caption>Table 12.5: Workflow and bridge diagnostics</caption>
+  <thead><tr><th style="width:24%">Symptom</th><th style="width:34%">Cause</th><th style="width:42%">Fix / command to check</th></tr></thead>
+  <tbody>
+    <tr><td>"HTTP error" and zero settlements</td><td>Shipment API down, or wrong base URL in <span class="mono">config.staging.json</span>.</td><td>Check the backend is on 5001 and the config path is <span class="mono">/api/shipments</span>.</td></tr>
+    <tr><td>"JSON parse error"</td><td>API returned HTML (proxy error page) or malformed JSON.</td><td><span class="mono">curl</span> the endpoint and inspect the body, not just the status.</td></tr>
+    <tr><td>EVM read fails</td><td>Wrong RPC, wrong escrow address, or chain not reachable from the workflow.</td><td>Confirm <span class="mono">rpcUrl</span>, <span class="mono">chainId</span> and the escrow address in the staging config.</td></tr>
+    <tr><td>"Escrow not funded (status 2)" in CRE logs</td><td>Order already settled.</td><td>Nothing to fix; this is the skip working correctly.</td></tr>
+    <tr><td>No <span class="mono">PROOFPAY_REPORT_V1</span> lines</td><td>No eligible shipments, or report generation placed after the dry-run branch (the historical bug).</td><td>Confirm <span class="mono">runtime.report</span> runs before <span class="mono">if (config.dryRun)</span>.</td></tr>
+    <tr><td>"report bytes do not decode as (bytes32,string,bytes32,string)"</td><td>Raw report used instead of the body, so the 109-byte header is present.</td><td>Use the <span class="mono">report</span> field from the log record; the workflow already selects the correct slice.</td></tr>
+    <tr><td>Bridge: "No bytecode at receiver"</td><td>Node restarted; contracts gone, or wrong address.</td><td>Redeploy and re-authorise, then update <span class="mono">.env</span>.</td></tr>
+    <tr><td>Bridge: "Admin … is not an unlocked RPC account"</td><td>Signer is not one of the node's accounts.</td><td>Point <span class="mono">BRIDGE_ADMIN_ACCOUNT</span> at account 0, or start the node with defaults.</td></tr>
+    <tr><td>Bridge: "receiver.manualOracle() is …, but the bridge signer is …"</td><td>Wiring mismatch after a redeploy.</td><td>Run the authorisation script again: <span class="mono">setManualOracle</span> must equal the signer.</td></tr>
+    <tr><td>Bridge: "outcome … is not one of the CRE settlement outputs"</td><td>Report carried MANUAL_REVIEW or an unexpected string.</td><td>Do not widen the bridge; fix the workflow so it emits no report for review cases.</td></tr>
+    <tr><td>Bridge: "CRE dryRun is false"</td><td>Someone enabled CRE writes while also running the bridge.</td><td>Keep CRE <span class="mono">dryRun: true</span> when using the bridge; the check exists to prevent double delivery.</td></tr>
+    <tr><td>Bridge refuses to start: lock exists</td><td>Previous run crashed, or another instance is alive.</td><td>The lock file stores a pid; a dead pid is removed automatically. Check for a running process before deleting manually.</td></tr>
+  </tbody>
+</table>
+
+<h2>12.7 "I restarted Hardhat and everything vanished"</h2>
+
+<p><b>Why.</b> The chain state lives in the node process. Restarting it produces a fresh chain at the same deterministic addresses, but with no deployments, no balances and no escrows. The backend's JSON still lists shipments that reference orders the new chain has never heard of.</p>
+
+<p><b>Order of recovery matters.</b> Start the node, redeploy the token and escrow, deploy the receiver, run the authorisation script, mint and distribute pUSD, then re-register shipments for the new order IDs, then run the bridge preflight. If you restore in a different order, the preflight will fail on address bytecode or on oracle wiring — which is the system telling you what is missing.</p>
+
+<p><b>What you lose.</b> Every transaction hash previously quoted, including the three settlement hashes. That is why the report records block numbers and hashes with their block heights, and why it says they are historical records of one chain instance rather than permanent addresses.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Modules 11 and 12</span>
+  <p><b>Q.</b> "What is the biggest security limitation?" <b>A.</b> The oracle path. Locally, one machine runs the simulation and one unlocked account submits; the external data source is a script with a shared secret. The contracts bound the damage — one payout per funded order, replay-blocked reports, authorised callers only — but a compromised API plus a compromised bridge could produce a wrong-but-well-formed settlement. A DON with multiple operators and a real carrier API is what removes that.</p>
+</div>

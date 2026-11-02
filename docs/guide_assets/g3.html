@@ -1,0 +1,218 @@
+<h1 class="module"><span class="mtag">MODULE 4</span>HARDHAT AND LOCAL BLOCKCHAIN DEVELOPMENT</h1>
+
+<p>Hardhat is the tool that turns Solidity text into a running system: it compiles, it deploys, it tests, and it can run a complete Ethereum node on your laptop. Everything you demonstrated in this project — a funded escrow, a CRE-mediated settlement at block 30 — happened on the chain that Hardhat started.</p>
+
+<h2>4.1 What Hardhat does, and why this project uses it</h2>
+
+<p>Hardhat is a development environment for Ethereum. In this repository it provides five things: a Solidity compiler pipeline (<span class="mono">npx hardhat compile</span>), a test runner built on Mocha with chain-aware assertions, a scripting environment where you write JavaScript that talks to the chain, a local node (<span class="mono">npx hardhat node</span>) with deterministic accounts, and a network abstraction so the same scripts can target <span class="mono">localhost</span> or a public network by changing one flag.</p>
+
+<div class="codefile">contracts/hardhat.config.js (complete)</div>
+<pre class="code">require("dotenv").config();
+require("@nomicfoundation/hardhat-ethers");
+require("@nomicfoundation/hardhat-chai-matchers");
+
+const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org";
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const LOCAL_RPC_URL = process.env.LOCAL_RPC_URL || "http://127.0.0.1:8545";
+
+module.exports = {
+  solidity: { version: "0.8.28", settings: { optimizer: { enabled: true, runs: 200 } } },
+  networks: {
+    hardhat:   { chainId: 31337 },
+    localhost: { url: LOCAL_RPC_URL, chainId: 31337, gas: 16000000 },
+    sepolia:   { url: SEPOLIA_RPC_URL, accounts: PRIVATE_KEY ? [PRIVATE_KEY] : [], chainId: 11155111 },
+  },
+};</pre>
+
+<p>Three observations that interviewers like. First, the optimizer is on at 200 runs: deployment bytecode is slightly larger, runtime calls are cheaper, which is the right trade for contracts called many times. Second, the <span class="mono">sepolia</span> block exists but was never used; its presence is configuration, not evidence of deployment, and the report says so. Third, the private key is read from the environment and only wired into the unused network — the local workflow never needs a key at all, because Hardhat's accounts are unlocked.</p>
+
+<h2>4.2 The local node, accounts and test ETH</h2>
+
+<p><span class="mono">npx hardhat node</span> starts a JSON-RPC server on port 8545, mines a block per transaction instantly, and prints twenty accounts with 10,000 test ETH each. The first three are the project's roles:</p>
+
+<table class="tbl">
+  <caption>Table 4.1: The accounts that matter in this project</caption>
+  <thead><tr><th style="width:12%">Index</th><th style="width:36%">Address</th><th style="width:52%">Role in ProofPay</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td><span class="mono">0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266</span></td><td>Deployer, owner of all three contracts, escrow owner, receiver <span class="mono">manualOracle</span>, bridge signer, holder of 1,000,000 minted pUSD initially.</td></tr>
+    <tr><td>1</td><td><span class="mono">0x70997970C51812dc3A010C7d01b50e0d17dc79C8</span></td><td>Buyer: approves and funds escrows; receives refunds.</td></tr>
+    <tr><td>2</td><td><span class="mono">0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC</span></td><td>Seller: registers shipments; receives releases.</td></tr>
+  </tbody>
+</table>
+
+<p>Because the node holds the keys in memory and exposes them as unlocked accounts, a client can send <span class="mono">eth_sendTransaction</span> and the node signs. That is why the bridge needs no private key. It is also why a restart is so destructive: the chain lives in the node's memory, so stopping it erases every block, every contract and every balance, and the next start redeploys from scratch at the same deterministic addresses with a fresh history.</p>
+
+<div class="box warn">
+  <span class="lbl">Never restart casually</span>
+  <p>If you restart the node mid-demonstration, the contract addresses stay the same (same deployer, same nonces) only after you redeploy; until then those addresses are empty. The frontend will show zero balances, the backend's shipment records will reference orders that no longer exist, and the bridge will fail preflight with "No bytecode at escrow". Recovery is: redeploy, re-authorise, re-mint, re-register shipments. Module 12 has the full procedure.</p>
+</div>
+
+<h2>4.3 Compilation, artifacts, ABI and bytecode</h2>
+
+<p><span class="mono">npx hardhat compile</span> produces two things per contract under <span class="mono">artifacts/</span>: <b>bytecode</b>, which is the deployable machine code, and the <b>ABI</b> (application binary interface), a JSON description of every function, argument, return value, event and error. The ABI is what lets JavaScript call a contract: it tells viem or ethers how to encode your arguments into calldata and how to decode the returned bytes.</p>
+
+<p>A function's <b>selector</b> is the first four bytes of <span class="mono">keccak256("name(type1,type2)")</span>. <span class="mono">processReport(bytes,bytes)</span> therefore always has the same selector everywhere in the world, which is why the 388-byte calldata in the bridge log begins with that constant and why an explorer can label a transaction it has never seen before.</p>
+
+<table class="tbl">
+  <caption>Table 4.2: Four operations beginners confuse</caption>
+  <thead><tr><th style="width:22%">Operation</th><th style="width:26%">What it costs / changes</th><th style="width:52%">How you do it here</th></tr></thead>
+  <tbody>
+    <tr><td>Deploy a contract</td><td>One transaction, gas paid, new address created, constructor runs once.</td><td><span class="mono">scripts/deploy.js</span> (token, escrow), <span class="mono">scripts/deploy-receiver.js</span> (receiver + JSON record).</td></tr>
+    <tr><td>Connect to a deployed contract</td><td>Free; no chain interaction.</td><td><span class="mono">new ethers.Contract(address, abi, signerOrProvider)</span> or viem's <span class="mono">readContract({ address, abi, ... })</span>.</td></tr>
+    <tr><td>Call a view function</td><td>Free, no transaction, no receipt; executed locally by the node via <span class="mono">eth_call</span>.</td><td><span class="mono">getEscrow</span>, <span class="mono">balanceOf</span>, <span class="mono">oracle()</span>, <span class="mono">manualOracle()</span>.</td></tr>
+    <tr><td>Send a state-changing transaction</td><td>Costs gas, produces a receipt, changes state permanently.</td><td><span class="mono">createEscrow</span>, <span class="mono">approve</span>, <span class="mono">processReport</span>.</td></tr>
+  </tbody>
+</table>
+
+<h2>4.4 Deployment scripts and what they prove</h2>
+
+<p>Deployment order is forced by the constructors. The token must exist before the escrow, because the escrow's constructor checks that the token address has bytecode. The escrow must exist before the receiver, because the receiver stores it as <span class="mono">IEscrowSettlement</span>. Then two authorisation calls make the chain of authority real: <span class="mono">escrow.setOracle(receiver)</span>, and <span class="mono">receiver.setManualOracle(admin)</span> with the forwarder left at zero.</p>
+
+<pre class="code">// The essence of scripts/authorize-receiver.js, with read-back verification.
+await escrow.setOracle(receiverAddress);
+const wired = await escrow.oracle();
+if (wired.toLowerCase() !== receiverAddress.toLowerCase()) throw new Error("oracle wiring failed");
+
+// scripts/deploy-receiver.js additionally writes:
+// contracts/deployments/cre-receiver-localhost.json
+// { network, chainId, deployer, owner, escrow, forwarder, manualOracle, receiver, deployedAt }</pre>
+
+<p>That JSON file is the project's deployment record, and it is why the report can state addresses with confidence. Its <span class="mono">forwarder</span> field is <span class="mono">0x000…000</span>: the honest marker that no DON is attached.</p>
+
+<h2>4.5 Testing: how 31 tests are organised, and what they actually assert</h2>
+
+<p>Tests are written with Mocha, Chai and <span class="mono">@nomicfoundation/hardhat-chai-matchers</span>, and use <span class="mono">loadFixture</span> from the network helpers. A fixture deploys the contracts once and snapshots the chain; every test then restores that snapshot, so tests cannot contaminate each other and the suite runs in under a second.</p>
+
+<pre class="code">async function deployTokenFixture() {
+  const [owner, alice, bob] = await ethers.getSigners();
+  const token = await (await ethers.getContractFactory("ProofPayUSD")).deploy(owner.address);
+  await token.waitForDeployment();
+  return { token, owner, alice, bob };
+}
+
+it("allows only the owner to mint", async function () {
+  const { token, owner, alice } = await loadFixture(deployTokenFixture);
+  await expect(token.connect(alice).mint(alice.address, 1000n))
+    .to.be.revertedWithCustomError(token, "OwnableUnauthorizedAccount")
+    .withArgs(alice.address);
+});</pre>
+
+<table class="tbl">
+  <caption>Table 4.3: The 31 contract tests by suite, and the failure each suite is designed to catch</caption>
+  <thead><tr><th style="width:24%">Suite</th><th style="width:8%">Tests</th><th style="width:68%">What the suite pins down (selected)</th></tr></thead>
+  <tbody>
+    <tr><td>ProofPayUSD</td><td>6</td><td>Exact metadata and zero initial supply; owner-only mint with the exact custom error and argument; rejection of minting to the zero address; standard approve/transferFrom semantics with allowance decrement; insufficient balance rejection; zero-owner deployment rejection.</td></tr>
+    <tr><td>ProofPayEscrow</td><td>16</td><td>Funding moves tokens and emits <span class="mono">EscrowCreated</span>; every validation branch reverts with its specific error; both payout paths pay the right party; duplicate order rejection; settlement of an unknown or unfunded order; oracle rotation; multiple escrows settled independently; reentrant creation blocked.</td></tr>
+    <tr><td>ProofPayCREReceiver</td><td>9</td><td>Only authorised callers; report decoding; replay of identical bytes rejected; a second, different report for a settled order rejected; unfunded and unknown escrows rejected; unsupported outcome rejected; multiple orders settled independently.</td></tr>
+  </tbody>
+</table>
+
+<h3>Two tests worth understanding in detail</h3>
+
+<p><b>"prevents duplicate settlement".</b> The test funds an escrow, submits a valid DELIVERED report, then submits the same report again. Without the protection, the seller would be paid twice out of other users' deposits — the escrow's balance is pooled, so the second payment would silently consume someone else's money. The assertion is that the second call reverts with <span class="mono">ReportAlreadyProcessed</span> and that the seller's balance is unchanged. The reason this test matters more than most: it is the difference between a demo and a system.</p>
+
+<p><b>"blocks reentrant escrow creation".</b> A malicious token contract calls back into <span class="mono">createEscrow</span> during <span class="mono">transferFrom</span>. Without a guard, the attacker could create a second escrow that shares the same deposit, or corrupt the mapping. The <span class="mono">nonReentrant</span> modifier makes the inner call revert. If you removed the modifier, this test fails immediately, which is exactly what you want from a security test.</p>
+
+<div class="box how">
+  <span class="lbl">How to run and read the suite</span>
+  <p><span class="mono">cd contracts &amp;&amp; npx hardhat test</span> prints one line per test and a summary. The expected summary is <b>31 passing</b> in well under a second. If a test fails, read the diff: chai-matchers show expected versus actual error names and arguments, which is usually enough to identify the broken invariant without a debugger.</p>
+</div>
+
+<h1 class="module"><span class="mtag">MODULE 5</span>FRONTEND DEVELOPMENT AND BLOCKCHAIN INTEGRATION</h1>
+
+<p>The frontend is a React 19 single-page application built by Vite 8, styled with Tailwind CSS 4, routed with React Router 7, and connected to the chain through MetaMask and viem. Its most important property is architectural: it holds no business truth. Everything it displays is read back from the contracts or the shipment API.</p>
+
+<h2>5.1 React in the vocabulary this project uses</h2>
+
+<table class="tbl">
+  <caption>Table 5.1: React concepts mapped to real ProofPay files</caption>
+  <thead><tr><th style="width:18%">Concept</th><th style="width:34%">Meaning</th><th style="width:48%">ProofPay instance</th></tr></thead>
+  <tbody>
+    <tr><td>Component</td><td>A function returning JSX; the unit of UI.</td><td><span class="mono">BuyerDashboard</span>, <span class="mono">SellerDashboard</span>, <span class="mono">CheckoutPage</span>, <span class="mono">OrderTracking</span>, <span class="mono">OraclePanel</span>, <span class="mono">ShipmentSimulatorPanel</span>.</td></tr>
+    <tr><td>Props</td><td>Read-only inputs from a parent.</td><td><span class="mono">CheckoutPage({ wallet, token, onCreated })</span>; <span class="mono">OraclePanel({ wallet, orders, onSettled })</span>.</td></tr>
+    <tr><td><span class="mono">useState</span></td><td>Local mutable state that triggers re-render.</td><td>Form fields (<span class="mono">seller</span>, <span class="mono">amount</span>), selected product, field errors, copied-state.</td></tr>
+    <tr><td><span class="mono">useEffect</span></td><td>Side effects after render; subscriptions; async reads.</td><td><span class="mono">useWallet</span> rehydrates the wallet and subscribes to <span class="mono">accountsChanged</span>/<span class="mono">chainChanged</span>; <span class="mono">OraclePanel</span> reads <span class="mono">escrow.oracle()</span> and <span class="mono">manualOracle()</span> on mount.</td></tr>
+    <tr><td>Custom hook</td><td>A function that packages stateful logic for reuse.</td><td><span class="mono">useWallet</span> (connection), <span class="mono">useEscrows</span> (discovery + reads), <span class="mono">useEscrowActions</span> (approve/create/settle transactions).</td></tr>
+    <tr><td>Context</td><td>Cross-tree state without prop drilling.</td><td>Not used for chain data; wallet state is passed explicitly, which keeps the data flow inspectable.</td></tr>
+    <tr><td>Event handler</td><td>Function bound to a DOM event.</td><td><span class="mono">handleSubmit</span> in checkout validates the seller address, the amount, and self-payment before any wallet prompt.</td></tr>
+    <tr><td>Conditional rendering</td><td>Render based on state.</td><td>Wrong-network banner; "Connect wallet" versus dashboard; transaction phase labels.</td></tr>
+    <tr><td>List rendering</td><td>Map data to elements with keys.</td><td>Escrow rows, activity feed, shipment event timeline.</td></tr>
+  </tbody>
+</table>
+
+<h2>5.2 TypeScript: why the types are not decoration</h2>
+
+<p>The project uses TypeScript 5.7 with strict settings. In a blockchain app this matters more than usual because three different representations of the same value meet in the browser: a decimal string typed by a user ("3499"), a <span class="mono">bigint</span> in the token's smallest unit, and a hex string for calldata. Mixing them silently is how people send 3.499 tokens instead of 3,499.</p>
+
+<pre class="code">// frontend/src/lib/contracts.ts — the boundary between display and chain units
+export function parseTokenAmount(input: string, decimals: number):
+  { value: bigint; error: string | null } { /* digits → bigint * 10**decimals */ }
+
+export function formatTokenAmount(value: bigint, decimals: number): string { /* reverse */ }</pre>
+
+<p>Every amount crossing the boundary goes through these two functions. The UI never does <span class="mono">parseFloat</span> on money, and the contract never sees a string. Types also catch the common mistake of passing <span class="mono">number</span> where <span class="mono">bigint</span> is required, which would otherwise throw at runtime on large amounts.</p>
+
+<h2>5.3 ABI, selectors and how the browser actually calls a contract</h2>
+
+<p>An ABI is a JSON array describing each function's name, inputs, outputs and mutability. viem uses it in two directions: <span class="mono">encodeFunctionData</span> turns (function, args) into calldata; <span class="mono">decodeFunctionResult</span> turns returned hex into typed values. A read becomes <span class="mono">eth_call</span>; a write becomes <span class="mono">eth_sendTransaction</span> followed by a receipt wait.</p>
+
+<table class="tbl">
+  <caption>Table 5.2: Read versus write, in the exact terms the code uses</caption>
+  <thead><tr><th style="width:16%">Aspect</th><th style="width:42%">Read (<span class="mono">eth_call</span>)</th><th style="width:42%">Write (<span class="mono">eth_sendTransaction</span>)</th></tr></thead>
+  <tbody>
+    <tr><td>Purpose</td><td>Evaluate a <span class="mono">view</span>/<span class="mono">pure</span> function without changing state.</td><td>Execute a state-changing function.</td></tr>
+    <tr><td>Wallet prompt</td><td>None.</td><td>One per transaction.</td></tr>
+    <tr><td>Cost</td><td>Free.</td><td>Gas, paid in test ETH here.</td></tr>
+    <tr><td>Result</td><td>Return data, decoded immediately.</td><td>Transaction hash, then a receipt with status and logs.</td></tr>
+    <tr><td>ProofPay example</td><td><span class="mono">getEscrow</span>, <span class="mono">balanceOf</span>, <span class="mono">manualOracle</span>.</td><td><span class="mono">approve</span>, <span class="mono">createEscrow</span>, <span class="mono">processReport</span>.</td></tr>
+  </tbody>
+</table>
+
+<pre class="code">// frontend/src/lib/receiver.ts — building a processReport call by hand
+export function encodeProcessReportCalldata(orderId, kind, observedAt) {
+  const outcome = kind === 'delivery' ? 'DELIVERED' : 'LOST';
+  const trackingIdHash = `0x${'0'.repeat(64)}`;           // manual path has no tracking hash
+  const report = encodeAbiParameters(
+    parseAbiParameters('bytes32 orderId, string outcome, bytes32 trackingIdHash, string observedAt'),
+    [orderId, outcome, trackingIdHash, observedAt]
+  );
+  return encodeFunctionData({ abi: RECEIVER_ABI, functionName: 'processReport', args: ['0x', report] });
+}</pre>
+
+<p>This function is worth studying because it mirrors the CRE payload exactly. The receiver decodes four fields; the manual panel must therefore produce four fields, with an empty metadata blob (<span class="mono">0x</span>) and a zero tracking hash. The zeroed hash is honest: the manual operator has no tracking ID, and the report ID is still unique because the timestamp and order differ. It also shows the trade-off of the manual path — no provenance — which is why automatic settlement is the project's real subject.</p>
+
+<h2>5.4 Discovering escrows, and why logs are not the source of truth</h2>
+
+<pre class="code">// frontend/src/store/useEscrows.ts (structure, not the whole file)
+const logs = await provider.request({ method: 'eth_getLogs', params: [{
+  address: escrowContractAddress(), fromBlock: '0x0', toBlock: 'latest',
+  topics: [ESCROW_CREATED_TOPIC]                       // filter on the event signature
+}]});
+const ids = [...new Set(logs.map(l =&gt; l.topics[1]))];  // indexed orderId
+for (const id of ids) {
+  const escrow = await readEscrow(id);                 // getEscrow via eth_call
+  // build the Order object from the struct, never from the log's data
+}</pre>
+
+<p>Two subtleties. The order ID is <i>indexed</i> in the event, which is why it appears in <span class="mono">topics[1]</span> and why <span class="mono">eth_getLogs</span> can filter on it. And the log is used only to learn which IDs exist; every displayed field is re-read from storage. That protects the UI from stale or partial logs and from the classic bug of trusting an event that a reorg could remove.</p>
+
+<h2>5.5 Transaction state in the UI, and why two receipts matter</h2>
+
+<p>The checkout does not fire two transactions and hope. It models the sequence explicitly: <span class="mono">approving</span> → <span class="mono">approved</span> → <span class="mono">creating</span> → confirmed, with the buttons disabled while <span class="mono">busy</span>. The reason is that the second transaction is only valid after the first is mined; sending both immediately would race, and the escrow call could execute before the allowance exists, reverting with <span class="mono">ERC20InsufficientAllowance</span>.</p>
+
+<pre class="code">const busy = tx.phase === 'approving' || tx.phase === 'approved' || tx.phase === 'creating';
+// ... later, after each receipt:
+//   approve  → phase 'approved', then send createEscrow
+//   create   → phase 'created', call onCreated() so the app re-reads the chain</pre>
+
+<p>After success, the component calls <span class="mono">onCreated()</span>, which triggers the same discovery-and-read path described above. No local state is trusted as a record of the purchase; the chain is re-read, and if the read disagrees with the optimistic UI, the chain wins.</p>
+
+<h2>5.6 Error handling that users can act on</h2>
+
+<p>Three error layers exist. Wallet errors come back with codes: 4001 means the user rejected the prompt, 4902 means the chain is not configured. Contract errors arrive as revert data; viem decodes them into the custom error name, which the UI can translate ("Escrow already exists for this order"). Application errors are the ones the UI generates before touching the wallet, such as "The seller cannot be your own wallet", validated in <span class="mono">handleSubmit</span>.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Modules 4 and 5</span>
+  <p><b>Q.</b> "Why does the UI call <span class="mono">getEscrow</span> after reading logs instead of decoding the log's data?" <b>A.</b> Logs are an index, not a record: they can be missing if you start from the wrong block and they carry only the fields the event declared. Storage is authoritative, so the app uses logs to find IDs and storage to render values.</p>
+  <p><b>Q.</b> "What happens if the user rejects the second MetaMask prompt?" <b>A.</b> The allowance transaction is already mined, so the spender is approved but no escrow exists. Nothing is lost; the UI reports the rejection and the buyer can retry the escrow call without repeating the approval.</p>
+</div>

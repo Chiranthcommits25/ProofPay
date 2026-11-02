@@ -1,0 +1,4 @@
+version: 1.0
+name: proofpay-shipment-settlement
+workflow-path: shipment-workflow/main.ts
+user-workflow-caller-address: "0x0000000000000000000000000000000000000000"

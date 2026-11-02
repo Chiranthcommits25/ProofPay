@@ -1,0 +1,366 @@
+<h1 class="module"><span class="mtag">MODULE 3</span>SMART CONTRACTS AND SOLIDITY FROM ZERO</h1>
+
+<p>This module is the centre of the book. Everything else in ProofPay exists to serve the three contracts: the frontend calls them, the backend checks them, the oracle reports into them, and the tests pin their behaviour. Read this module twice — once for the language, once for the design.</p>
+
+<h2>3.1 What a smart contract is, precisely</h2>
+
+<p>A smart contract is a program deployed to a blockchain, where it receives an address, keeps its own storage, and can only be changed by sending it a transaction. Three properties distinguish it from a backend function:</p>
+
+<ul>
+  <li><b>Deterministic execution.</b> Every node computes the same result from the same input. No randomness, no clock, no network, no filesystem. <span class="mono">block.timestamp</span> is the only time available, and it is the block's time, agreed by consensus.</li>
+  <li><b>Persistent, public state.</b> Storage survives forever and anyone can read it. That is why ProofPay writes only the escrow's essentials and keeps product names, descriptions and tracking IDs off chain.</li>
+  <li><b>No owner override.</b> Once deployed, the code cannot be patched. ProofPay's escrow deliberately has no pause, upgrade or sweep function; the only mutable configuration is the oracle address.</li>
+</ul>
+
+<p>The practical consequence: a bug in a backend can be fixed in ten minutes; a bug in a contract that holds money is permanent. That asymmetry explains the project's conservatism — small functions, explicit checks, OpenZeppelin for anything standard, and 31 tests for 300 lines of Solidity.</p>
+
+<h2>3.2 Solidity in one page, using ProofPay's own constructs</h2>
+
+<table class="tbl">
+  <caption>Table 3.1: Solidity constructs you must be able to name, with ProofPay examples</caption>
+  <thead><tr><th style="width:17%">Construct</th><th style="width:37%">Meaning</th><th style="width:46%">In this project</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">pragma solidity</span></td><td>Compiler version constraint.</td><td><span class="mono">^0.8.20</span> in all three contracts, compiled with 0.8.28.</td></tr>
+    <tr><td><span class="mono">contract</span></td><td>A unit of code plus storage; deployed once, called many times.</td><td><span class="mono">ProofPayUSD</span>, <span class="mono">ProofPayEscrow</span>, <span class="mono">ProofPayCREReceiver</span>.</td></tr>
+    <tr><td><span class="mono">constructor</span></td><td>Runs once at deployment; sets immutable values.</td><td>Escrow takes the token address and owner; receiver takes escrow, owner, forwarder, manual oracle.</td></tr>
+    <tr><td>State variable</td><td>Permanent storage slot.</td><td><span class="mono">paymentToken</span> (immutable), <span class="mono">oracle</span>, <span class="mono">_escrows</span>, <span class="mono">processedReports</span>.</td></tr>
+    <tr><td>Visibility</td><td><span class="mono">public</span> (callable outside + getter), <span class="mono">external</span> (callable outside only), <span class="mono">internal</span> (this contract and children), <span class="mono">private</span> (this contract).</td><td><span class="mono">_getFundedEscrow</span> is private; <span class="mono">_processReport</span> is internal; settlement functions are external.</td></tr>
+    <tr><td><span class="mono">view</span> / <span class="mono">pure</span></td><td>Reads state / reads nothing. Costs no gas when called externally with <span class="mono">eth_call</span>.</td><td><span class="mono">getEscrow</span> is <span class="mono">view</span>; <span class="mono">decimals()</span> is <span class="mono">pure</span>.</td></tr>
+    <tr><td><span class="mono">payable</span></td><td>Allows ETH to be sent with the call.</td><td>Not used: pUSD is the payment asset, ETH is only gas. That absence is a design statement.</td></tr>
+    <tr><td><span class="mono">mapping</span></td><td>Key-value store; every key exists conceptually with a zero value.</td><td><span class="mono">mapping(bytes32 =&gt; Escrow)</span>, <span class="mono">mapping(bytes32 =&gt; bool)</span>.</td></tr>
+    <tr><td><span class="mono">struct</span></td><td>Grouped fields.</td><td><span class="mono">Escrow { orderId, buyer, seller, amount, createdAt, settledAt, status }</span>.</td></tr>
+    <tr><td><span class="mono">enum</span></td><td>Named integers, 0..n-1.</td><td><span class="mono">None=0, Funded=1, Released=2, Refunded=3</span>; the numbers matter because CRE and the bridge compare against <span class="mono">1</span>.</td></tr>
+    <tr><td><span class="mono">modifier</span></td><td>Reusable pre/post condition wrapped around a function body.</td><td><span class="mono">onlyOracle</span>, <span class="mono">nonReentrant</span>, <span class="mono">onlyOwner</span>, <span class="mono">onlyAuthorized</span>.</td></tr>
+    <tr><td><span class="mono">event</span></td><td>Append-only log; not readable by contracts.</td><td><span class="mono">EscrowCreated</span>, <span class="mono">ReportProcessed</span>, <span class="mono">SettlementExecuted</span>.</td></tr>
+    <tr><td>Custom error</td><td>Cheap typed revert with arguments.</td><td><span class="mono">error EscrowNotFunded(bytes32 orderId)</span>; the tests assert on the exact error.</td></tr>
+    <tr><td><span class="mono">require</span> / <span class="mono">revert</span></td><td>Abort and undo all state changes.</td><td>Every validation branch uses <span class="mono">if (...) revert ErrorName();</span>.</td></tr>
+    <tr><td>Inheritance / interfaces</td><td>Reuse and type-safe external calls.</td><td><span class="mono">is ERC20, Ownable</span>; <span class="mono">IEscrowSettlement</span>, <span class="mono">IReceiver</span>, <span class="mono">IERC165</span>.</td></tr>
+    <tr><td><span class="mono">msg.sender</span></td><td>The immediate caller — a contract's call has the contract as sender.</td><td>The escrow sees the <i>receiver</i> as sender during settlement, not the admin. This is the whole trick.</td></tr>
+    <tr><td><span class="mono">msg.value</span></td><td>ETH attached to the call.</td><td>Always zero here; no function is payable.</td></tr>
+    <tr><td><span class="mono">block.timestamp</span></td><td>Current block time in seconds.</td><td>Stored as <span class="mono">uint64</span> in <span class="mono">createdAt</span> and <span class="mono">settledAt</span> to pack storage.</td></tr>
+  </tbody>
+</table>
+
+<div class="box analogy">
+  <span class="lbl">A 15-line contract, so the syntax has somewhere to land</span>
+  <pre class="code" style="margin:4pt 0 0 0">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Vault {
+    mapping(address =&gt; uint256) public balances;   // storage
+    error NotEnough(uint256 have, uint256 want);   // custom error
+
+    function deposit() external payable {          // payable: accepts ETH
+        balances[msg.sender] += msg.value;         // state write
+    }
+
+    function withdraw(uint256 amount) external {
+        uint256 have = balances[msg.sender];
+        if (have &lt; amount) revert NotEnough(have, amount);
+        balances[msg.sender] = have - amount;      // write BEFORE send
+        payable(msg.sender).transfer(amount);      // external call LAST
+    }
+}</pre>
+  <p style="margin-top:5pt">The ordering in <span class="mono">withdraw</span> — check, then write, then transfer — is the "checks-effects-interactions" pattern. ProofPay's escrow follows it too, and additionally wraps each state-changing function in <span class="mono">nonReentrant</span>.</p>
+</div>
+
+<h2>3.3 ERC-20, from first principles</h2>
+
+<p>A token is not a special kind of coin; it is a row in a contract's storage. ERC-20 is a standard interface for such rows so that wallets, exchanges and other contracts can treat every token the same way. The standard requires six functions (<span class="mono">totalSupply</span>, <span class="mono">balanceOf</span>, <span class="mono">transfer</span>, <span class="mono">allowance</span>, <span class="mono">approve</span>, <span class="mono">transferFrom</span>) and two events (<span class="mono">Transfer</span>, <span class="mono">Approval</span>).</p>
+
+<table class="tbl">
+  <caption>Table 3.2: ERC-20 concepts, and exactly where ProofPay uses them</caption>
+  <thead><tr><th style="width:18%">Concept</th><th style="width:40%">Meaning</th><th style="width:42%">ProofPay use</th></tr></thead>
+  <tbody>
+    <tr><td>Fungible</td><td>Every unit is identical; 1 pUSD = 1 pUSD.</td><td>Correct for money. A courier receipt would be non-fungible (ERC-721), which this project does not use.</td></tr>
+    <tr><td>Decimals / <span class="mono">decimals()</span></td><td>Display scaling only. All arithmetic uses integers.</td><td>18, so 3,499 pUSD is <span class="mono">3499 * 10^18</span> = 3499000000000000000000. The UI's <span class="mono">parseTokenAmount</span> does the multiplication; <span class="mono">formatTokenAmount</span> reverses it.</td></tr>
+    <tr><td><span class="mono">balanceOf</span></td><td>Balance of one address.</td><td>Dashboard header; the evidence script's before/after check (+100 exactly).</td></tr>
+    <tr><td><span class="mono">allowance</span></td><td>How much a spender may still take from an owner.</td><td>Read by the checkout before offering "Fund"; consumed inside <span class="mono">createEscrow</span>.</td></tr>
+    <tr><td><span class="mono">approve</span></td><td>Sets that cap.</td><td>Transaction 1 of a purchase; 46,383 gas in this deployment.</td></tr>
+    <tr><td><span class="mono">transfer</span></td><td>Owner moves their own tokens.</td><td>Used by the escrow at settlement: <span class="mono">safeTransfer(seller, amount)</span>.</td></tr>
+    <tr><td><span class="mono">transferFrom</span></td><td>A spender moves tokens within the allowance.</td><td>Used at funding: <span class="mono">safeTransferFrom(buyer, escrow, amount)</span>. This is the only way pUSD enters custody.</td></tr>
+    <tr><td><span class="mono">mint</span> / <span class="mono">burn</span></td><td>Create / destroy supply. Not in the standard; an extension.</td><td>Only <span class="mono">mint</span> exists, owner-only. No burn: escrowed value must not be destroyable.</td></tr>
+    <tr><td>Events</td><td>Transfer/Approval logs.</td><td>How block explorers and the UI show token movement without calling <span class="mono">balanceOf</span> for every address.</td></tr>
+  </tbody>
+</table>
+
+<p>Why are <span class="mono">approve</span> and <span class="mono">transferFrom</span> separate? Because otherwise any contract you call could take everything you own. The allowance is a capability you grant deliberately, for a specific spender, up to a specific amount. ProofPay's UI approves the exact order amount rather than an unlimited allowance, so a bug in the escrow cannot drain the wallet beyond one order.</p>
+
+<ol>
+  <li>Buyer calls <span class="mono">approve(escrow, 3499e18)</span> on pUSD. Storage: <span class="mono">allowance[buyer][escrow] = 3499e18</span>.</li>
+  <li>Buyer calls <span class="mono">createEscrow(orderId, seller, 3499e18)</span> on the escrow.</li>
+  <li>Escrow calls <span class="mono">pUSD.transferFrom(buyer, escrow, 3499e18)</span>.</li>
+  <li>pUSD checks <span class="mono">allowance[buyer][escrow] &gt;= 3499e18</span> and <span class="mono">balanceOf(buyer) &gt;= 3499e18</span>, moves the balance, decrements the allowance, emits <span class="mono">Transfer</span>.</li>
+  <li>Escrow emits <span class="mono">EscrowCreated</span> and returns. The buyer's wallet is 3,499 pUSD lighter; the escrow contract is 3,499 pUSD heavier; nobody can spend it.</li>
+</ol>
+
+<h2>3.4 ProofPayUSD.sol, line by line</h2>
+
+<p>The entire token is sixteen lines. Its restraint is the point: every added feature would be another way to lose money.</p>
+
+<div class="codefile">contracts/contracts/ProofPayUSD.sol (complete file)</div>
+<pre class="code">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+
+contract ProofPayUSD is ERC20, Ownable {
+    constructor(address initialOwner) ERC20("ProofPay USD", "pUSD") Ownable(initialOwner) {}
+
+    function decimals() public pure override returns (uint8) {
+        return 18;
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+}</pre>
+
+<table class="tbl">
+  <caption>Table 3.3: What each line of ProofPayUSD does, and why it is written that way</caption>
+  <thead><tr><th style="width:34%">Line</th><th style="width:66%">Explanation</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">contract ProofPayUSD is ERC20, Ownable</span></td><td>Inherits the whole standard implementation (balances, allowances, transfers, events) and OpenZeppelin's ownership module (an <span class="mono">owner()</span> address plus <span class="mono">onlyOwner</span>). Nothing about ERC-20 is hand-written, which eliminates a whole class of bugs.</td></tr>
+    <tr><td><span class="mono">constructor(address initialOwner) ERC20("ProofPay USD","pUSD") Ownable(initialOwner) {}</span></td><td>Sets the display name and symbol, and makes the deployer's chosen address the owner. Empty body: everything needed is done by the two base constructors. A zero owner would revert with <span class="mono">OwnableInvalidOwner</span> — tested.</td></tr>
+    <tr><td><span class="mono">decimals() override returns 18</span></td><td>Explicit even though 18 is OpenZeppelin's default. Stating it makes the scaling assumption visible in the source and in the report, and it is marked <span class="mono">pure</span> because it reads nothing.</td></tr>
+    <tr><td><span class="mono">mint(address,uint256) external onlyOwner</span></td><td>The only way supply grows. <span class="mono">external</span> because it is always called from outside; <span class="mono">onlyOwner</span> because an open mint would let anyone print money and destroy the escrow's meaning. Delegates to <span class="mono">_mint</span>, which also rejects the zero address.</td></tr>
+  </tbody>
+</table>
+
+<p>What is deliberately missing: no burn (escrowed value must never be destroyable), no pause (a pause would give the owner a way to freeze everyone's funds), no fee-on-transfer (that would break the escrow's accounting, which asserts an exact amount arrives), no permit (not needed by this flow), no cap (the demonstration mints on demand). Because the token is plain ERC-20, the escrow can use <span class="mono">SafeERC20</span> and behave predictably.</p>
+
+<p><b>Lifecycle.</b> Deploy with owner = admin (block 1, gas 618,390). Mint 1,000,000 pUSD to the admin (block 4), then distribute to buyer and seller (blocks 5–6). Buyer approves the escrow per order. Escrow pulls funds with <span class="mono">transferFrom</span>. At settlement the escrow calls <span class="mono">transfer</span> to the seller or back to the buyer. Total supply at block 32 was 1,010,100 pUSD, which is simply the initial million plus the top-ups used to seed demonstration orders.</p>
+
+<h2>3.5 ProofPayEscrow.sol, the heart of the system</h2>
+
+<p>The escrow answers one question: who is allowed to move this money, and when? It holds pUSD, records one struct per order, and exposes exactly two terminal transitions. There is no <span class="mono">withdraw</span>, no admin rescue, no upgrade. If the oracle disappears, the money stays locked — a deliberate failure mode, because "stuck" is recoverable by governance while "drained" is not.</p>
+
+<div class="codefile">contracts/contracts/ProofPayEscrow.sol &mdash; state and types (lines 10–48)</div>
+<pre class="code">enum EscrowStatus { None, Funded, Released, Refunded }
+
+struct Escrow {
+    bytes32 orderId;
+    address buyer;
+    address seller;
+    uint256 amount;
+    uint64 createdAt;
+    uint64 settledAt;
+    EscrowStatus status;
+}
+
+IERC20 public immutable paymentToken;
+address public oracle;
+mapping(bytes32 =&gt; Escrow) private _escrows;</pre>
+
+<p>Two details repay attention. <span class="mono">paymentToken</span> is <span class="mono">immutable</span>: set once in the constructor and inlined into the bytecode, so it can never be pointed at a malicious token later. The timestamps are <span class="mono">uint64</span> rather than <span class="mono">uint256</span>: they fit comfortably until the year 584 billion, and packing two 64-bit values with an address and an enum into fewer storage slots saves gas.</p>
+
+<table class="tbl">
+  <caption>Table 3.4: The escrow's complete state machine</caption>
+  <thead><tr><th style="width:14%">State</th><th style="width:8%">Value</th><th style="width:34%">How you get here</th><th style="width:44%">What is possible next</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">None</span></td><td>0</td><td>Default for every order ID that was never used. <span class="mono">getEscrow</span> reverts rather than returning this.</td><td><span class="mono">createEscrow</span> (only if the ID is unused).</td></tr>
+    <tr><td><span class="mono">Funded</span></td><td>1</td><td><span class="mono">createEscrow</span> after validations and a successful <span class="mono">transferFrom</span>.</td><td><span class="mono">confirmDelivery</span> or <span class="mono">confirmFailure</span>, both oracle-only. Nothing else. It can stay Funded indefinitely.</td></tr>
+    <tr><td><span class="mono">Released</span></td><td>2</td><td><span class="mono">confirmDelivery</span>: seller paid, <span class="mono">settledAt</span> set.</td><td>Nothing. A second settlement reverts <span class="mono">EscrowNotFunded</span>.</td></tr>
+    <tr><td><span class="mono">Refunded</span></td><td>3</td><td><span class="mono">confirmFailure</span>: buyer repaid, <span class="mono">settledAt</span> set.</td><td>Nothing. Same protection.</td></tr>
+  </tbody>
+</table>
+
+<h3>createEscrow — the only way in</h3>
+
+<div class="codefile">ProofPayEscrow.sol lines 79–118</div>
+<pre class="code">function createEscrow(bytes32 orderId, address buyer, address seller, uint256 amount)
+    external nonReentrant
+{
+    if (orderId == bytes32(0)) revert InvalidOrderId();
+    if (buyer == address(0) || buyer != msg.sender) revert InvalidBuyer();
+    if (seller == address(0)) revert InvalidSeller();
+    if (buyer == seller) revert SameBuyerAndSeller();
+    if (amount == 0) revert InvalidAmount();
+    if (_escrows[orderId].status != EscrowStatus.None) revert EscrowAlreadyExists(orderId);
+
+    _escrows[orderId] = Escrow({ orderId: orderId, buyer: buyer, seller: seller, amount: amount,
+        createdAt: uint64(block.timestamp), settledAt: 0, status: EscrowStatus.Funded });
+
+    paymentToken.safeTransferFrom(buyer, address(this), amount);
+    emit EscrowCreated(orderId, buyer, seller, amount);
+}</pre>
+
+<table class="tbl">
+  <caption>Table 3.5: createEscrow, function contract</caption>
+  <thead><tr><th style="width:24%">Question</th><th style="width:76%">Answer</th></tr></thead>
+  <tbody>
+    <tr><td>Purpose</td><td>Open an escrow and take custody of the buyer's pUSD.</td></tr>
+    <tr><td>Caller</td><td>The buyer, from the checkout page, via MetaMask.</td></tr>
+    <tr><td>Parameters</td><td><span class="mono">orderId</span> (random 32 bytes generated client-side), <span class="mono">buyer</span> (must equal <span class="mono">msg.sender</span>), <span class="mono">seller</span>, <span class="mono">amount</span> in the token's smallest unit.</td></tr>
+    <tr><td>Why <span class="mono">buyer</span> is a parameter at all</td><td>An explicit argument makes the intent readable and lets the contract prove <span class="mono">buyer == msg.sender</span>. Without that check, someone could fund an escrow in another person's name using their own allowance, producing a confusing ownership record.</td></tr>
+    <tr><td>Internal flow</td><td>Six validations, write the struct, then <span class="mono">safeTransferFrom</span>, then emit. Note the order: state first, external call last, which is checks-effects-interactions.</td></tr>
+    <tr><td>Storage changes</td><td><span class="mono">_escrows[orderId]</span> gains a <span class="mono">Funded</span> record; the token updates two balances and one allowance.</td></tr>
+    <tr><td>Events</td><td><span class="mono">EscrowCreated(orderId indexed, buyer indexed, seller indexed, amount)</span> plus the token's <span class="mono">Transfer</span>.</td></tr>
+    <tr><td>Reverts</td><td><span class="mono">InvalidOrderId</span>, <span class="mono">InvalidBuyer</span>, <span class="mono">InvalidSeller</span>, <span class="mono">SameBuyerAndSeller</span>, <span class="mono">InvalidAmount</span>, <span class="mono">EscrowAlreadyExists</span>, and from the token: <span class="mono">ERC20InsufficientAllowance</span> / <span class="mono">ERC20InsufficientBalance</span>.</td></tr>
+    <tr><td>How it protects funds</td><td>The only address that can ever move the deposit afterwards is <span class="mono">oracle</span>, because both settlement functions are <span class="mono">onlyOracle</span>. <span class="mono">buyer == msg.sender</span> stops third-party funding; the uniqueness check stops a second deposit overwriting a live one.</td></tr>
+  </tbody>
+</table>
+
+<h3>confirmDelivery and confirmFailure — the only ways out</h3>
+
+<div class="codefile">ProofPayEscrow.sol lines 119–139</div>
+<pre class="code">function confirmDelivery(bytes32 orderId) external onlyOracle nonReentrant {
+    Escrow storage escrow = _getFundedEscrow(orderId);
+    escrow.status = EscrowStatus.Released;
+    escrow.settledAt = uint64(block.timestamp);
+    paymentToken.safeTransfer(escrow.seller, escrow.amount);
+    emit EscrowReleased(orderId, escrow.seller, escrow.amount);
+}
+
+function confirmFailure(bytes32 orderId) external onlyOracle nonReentrant {
+    Escrow storage escrow = _getFundedEscrow(orderId);
+    escrow.status = EscrowStatus.Refunded;
+    escrow.settledAt = uint64(block.timestamp);
+    paymentToken.safeTransfer(escrow.buyer, escrow.amount);
+    emit EscrowRefunded(orderId, escrow.buyer, escrow.amount);
+}</pre>
+
+<p>The private helper is where the real invariant lives:</p>
+
+<div class="codefile">ProofPayEscrow.sol lines 141–158 &mdash; read path and funding guard</div>
+<pre class="code">function getEscrow(bytes32 orderId) external view returns (Escrow memory) {
+    Escrow memory escrow = _escrows[orderId];
+    if (escrow.status == EscrowStatus.None) revert EscrowNotFound(orderId);
+    return escrow;
+}
+
+function _getFundedEscrow(bytes32 orderId) private view returns (Escrow storage escrow) {
+    escrow = _escrows[orderId];
+    if (escrow.status == EscrowStatus.None) revert EscrowNotFound(orderId);
+    if (escrow.status != EscrowStatus.Funded) revert EscrowNotFunded(orderId);
+}</pre>
+
+<p>Read those two functions together and you see the double-settlement defence at the custody layer: settlement requires <span class="mono">status == Funded</span>, and settlement immediately writes <span class="mono">Released</span> or <span class="mono">Refunded</span>. A second attempt therefore fails at <span class="mono">_getFundedEscrow</span> before any transfer. That is true even if a future receiver, a buggy script or a stolen key calls it again. Defence in depth: the receiver also tries to prevent the second call, but the escrow does not depend on it.</p>
+
+<div class="box why">
+  <span class="lbl">Why not send funds straight to the seller and refund from the seller if lost?</span>
+  <p>Because the seller would have to be trusted to return money. Escrow inverts the trust: the money sits in a contract that neither party controls, and the only question is who can prove the condition. That is also why the escrow has no owner-withdrawal path — an "emergency" admin function is exactly the backdoor users would criticise in an audit.</p>
+</div>
+
+<h3>setOracle and the authority chain</h3>
+
+<pre class="code">function setOracle(address newOracle) external onlyOwner {
+    if (newOracle == address(0)) revert InvalidOracle();
+    address previousOracle = oracle;
+    oracle = newOracle;
+    emit OracleUpdated(previousOracle, newOracle);
+}</pre>
+
+<p>One line of configuration decides who may settle every order. In this deployment the owner is the admin EOA and the oracle is the receiver contract, set in block 19 for 30,539 gas. That separation is deliberate: the owner key configures, the receiver executes. When the project moves to a DON, only this address changes.</p>
+
+<h2>3.6 ProofPayCREReceiver.sol, the policy boundary</h2>
+
+<p>Why does a second contract exist between the oracle and the money? Three reasons. It accepts the exact interface a Chainlink DON calls (<span class="mono">onReport(bytes,bytes)</span>). It centralises authorisation, decoding, replay protection and duplicate-settlement checks in one auditable place. And it lets the escrow stay dumb: the escrow knows nothing about reports, outcomes or CRE, only "pay seller" and "pay buyer".</p>
+
+<div class="codefile">ProofPayCREReceiver.sol &mdash; state and authorisation (lines 40–96)</div>
+<pre class="code">IEscrowSettlement public immutable escrow;
+address public forwarder;        // authorised DON forwarder
+address public manualOracle;     // authorised local/backup settler
+mapping(bytes32 =&gt; bool) public processedReports;
+mapping(bytes32 =&gt; bool) public orderSettled;
+
+modifier onlyAuthorized() {
+    if (msg.sender == forwarder) { _; return; }
+    if (manualOracle != address(0) &amp;&amp; msg.sender == manualOracle) { _; return; }
+    if (owner() == msg.sender &amp;&amp; forwarder == address(0)) { _; return; }
+    revert UnauthorizedCaller(msg.sender);
+}</pre>
+
+<p>Read the third branch carefully, because it is the one to be honest about. When no forwarder is configured — as in this local deployment, where the forwarder is the zero address — the owner may also settle. That is a convenience for local work and a weakening of the model; a production deployment would set a forwarder and delete that branch. The report and this guide both say so rather than pretending the fallback is a feature.</p>
+
+<div class="codefile">ProofPayCREReceiver.sol lines 116–168 &mdash; entry points and processing</div>
+<pre class="code">function onReport(bytes calldata metadata, bytes calldata report) external override onlyAuthorized {
+    _processReport(metadata, report);
+}
+function processReport(bytes calldata metadata, bytes calldata report) external onlyAuthorized {
+    _processReport(metadata, report);
+}
+
+function _processReport(bytes calldata metadata, bytes calldata report) internal {
+    (bytes32 orderId, string memory outcome, bytes32 trackingIdHash, string memory observedAt)
+        = abi.decode(report, (bytes32, string, bytes32, string));
+
+    if (orderId == bytes32(0)) revert InvalidReportData();
+
+    bytes32 reportId = keccak256(
+        abi.encodePacked(orderId, outcome, trackingIdHash, observedAt, metadata)
+    );
+    if (processedReports[reportId]) revert ReportAlreadyProcessed(reportId);
+    if (orderSettled[orderId]) revert OrderAlreadySettled(orderId);
+
+    try this._checkEscrowFunded(orderId) returns (bool funded) {
+        if (!funded) revert EscrowNotFunded(orderId);
+    } catch { revert EscrowNotFound(orderId); }
+
+    bytes32 outcomeHash = keccak256(bytes(outcome));
+    if (outcomeHash == keccak256(bytes("DELIVERED"))) {
+        escrow.confirmDelivery(orderId);
+        processedReports[reportId] = true;
+        orderSettled[orderId] = true;
+        emit ReportProcessed(orderId, outcome, reportId);
+        emit SettlementExecuted(orderId, true);
+    } else if (outcomeHash == keccak256(bytes("LOST"))) {
+        escrow.confirmFailure(orderId);
+        processedReports[reportId] = true;
+        orderSettled[orderId] = true;
+        emit ReportProcessed(orderId, outcome, reportId);
+        emit SettlementExecuted(orderId, false);
+    } else {
+        revert UnsupportedOutcome(outcome);
+    }
+}</pre>
+
+<table class="tbl">
+  <caption>Table 3.6: What each stage of _processReport is defending against</caption>
+  <thead><tr><th style="width:26%">Stage</th><th style="width:37%">Attack or mistake it prevents</th><th style="width:37%">What happens on failure</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">abi.decode(...)</span></td><td>Garbage bytes, a truncated payload, or a payload with the wrong field types.</td><td>Decoding reverts; the transaction fails with no state change.</td></tr>
+    <tr><td><span class="mono">orderId == 0</span></td><td>A default or empty report that would otherwise hash to something and mark an order settled.</td><td><span class="mono">InvalidReportData</span>.</td></tr>
+    <tr><td><span class="mono">reportId</span> check</td><td>Replay: sending identical bytes twice, after a restart or from two bridges.</td><td><span class="mono">ReportAlreadyProcessed(reportId)</span>; the second transaction is refused, the first stays final.</td></tr>
+    <tr><td><span class="mono">orderSettled</span> check</td><td>A <i>different</i> report for an order already paid: different timestamp, different metadata, same order.</td><td><span class="mono">OrderAlreadySettled(orderId)</span>.</td></tr>
+    <tr><td>Funding self-call</td><td>Settling a stale report whose escrow was already closed, or a nonexistent order.</td><td><span class="mono">EscrowNotFunded</span> / <span class="mono">EscrowNotFound</span>.</td></tr>
+    <tr><td>Outcome hash branch</td><td>Any outcome other than the two supported strings, including a workflow bug that emitted <span class="mono">MANUAL_REVIEW</span>.</td><td><span class="mono">UnsupportedOutcome(outcome)</span>; nothing is paid.</td></tr>
+  </tbody>
+</table>
+
+<p>Note what the receiver does <b>not</b> do: it does not verify a signature, because authorisation comes from the caller's address; it does not re-derive the outcome from anything, because the outcome is CRE's decision; and it does not know the seller or the amount, because the escrow owns those facts. It is a policy boundary, and keeping it narrow is what makes it reviewable.</p>
+
+<h2>3.7 Solidity security, using your own code as the case study</h2>
+
+<h3>Reentrancy</h3>
+
+<p>Reentrancy is an attack where an external call lets the callee call back into your contract before your state is final. With a token that had a malicious hook, <span class="mono">safeTransfer</span> could re-enter <span class="mono">confirmDelivery</span> and pay twice. Two defences stop it here. <span class="mono">ReentrancyGuard</span> sets a storage flag so a nested call reverts with <span class="mono">ReentrancyGuardReentrantCall</span>. And the state is already terminal before the transfer, so even without the guard a second entry would hit <span class="mono">EscrowNotFunded</span>. The test suite includes a reentrant <span class="mono">createEscrow</span> case precisely to keep both defences honest.</p>
+
+<h3>SafeERC20</h3>
+
+<p>Some tokens return <span class="mono">false</span> instead of reverting on failure, and some return nothing at all. A plain <span class="mono">transfer</span> call that ignores the return value can therefore "succeed" without moving anything. <span class="mono">SafeERC20</span> checks the return data and reverts if the call failed, so the escrow's accounting cannot drift from reality. pUSD itself behaves, but the escrow is written to survive a less cooperative asset.</p>
+
+<h3>Access control and the principle of least authority</h3>
+
+<table class="tbl">
+  <caption>Table 3.7: Every privileged action in the system</caption>
+  <thead><tr><th style="width:26%">Action</th><th style="width:22%">Who can do it</th><th style="width:52%">Why that role, and what it cannot do</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">mint</span></td><td><span class="mono">owner</span> of the token (admin EOA)</td><td>Needed to create the demonstration economy. Cannot move anyone's existing balance.</td></tr>
+    <tr><td><span class="mono">setOracle</span></td><td><span class="mono">owner</span> of the escrow</td><td>Points settlement at the receiver. Cannot settle directly — no such function exists.</td></tr>
+    <tr><td><span class="mono">setForwarder</span>, <span class="mono">setManualOracle</span></td><td><span class="mono">owner</span> of the receiver</td><td>Configures who may deliver reports. Rotation is logged via events.</td></tr>
+    <tr><td><span class="mono">confirmDelivery</span>, <span class="mono">confirmFailure</span></td><td><span class="mono">oracle</span> (the receiver contract)</td><td>The only path to money movement. No EOA holds this role.</td></tr>
+    <tr><td><span class="mono">processReport</span>, <span class="mono">onReport</span></td><td>forwarder, manual oracle, or owner-with-no-forwarder</td><td>Delivers a report; still bound by replay, duplicate and funding checks, and still cannot choose the payee.</td></tr>
+  </tbody>
+</table>
+
+<h3>Integer handling</h3>
+
+<p>Solidity 0.8 checks arithmetic by default: overflow and underflow revert instead of wrapping. That is why ProofPay needs no <span class="mono">SafeMath</span>. Balances are <span class="mono">uint256</span> in the token's smallest unit, so 3,499 pUSD is 3499&times;10<sup>18</sup>, an integer with no rounding. Comparisons such as <span class="mono">amount == 0</span> are exact; there are no floating-point traps anywhere in the money path, and the UI's formatting is presentation only.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 3</span>
+  <p><b>Q.</b> "Where exactly do you prevent double payment?" <b>A.</b> In three independent places. The escrow requires <span class="mono">status == Funded</span> and flips it to a terminal state before transferring. The receiver keeps <span class="mono">processedReports</span> for identical reports and <span class="mono">orderSettled</span> for any second report on the same order. The bridge refuses to submit a report ID it already recorded. Any one of the three would stop the common case; all three together stop retries after crashes, two competing bridges, and a buggy new caller.</p>
+  <p><b>Q.</b> "Can the owner steal the escrowed money?" <b>A.</b> Not directly. The owner can point the oracle at a contract that always releases, which is a governance risk, not a code-level drain — and it is logged by <span class="mono">OracleUpdated</span>. There is no function that transfers escrowed pUSD to an arbitrary address.</p>
+</div>

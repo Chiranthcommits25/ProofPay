@@ -1,0 +1,206 @@
+<h1 class="module"><span class="mtag">MODULE 16</span>HANDS-ON EXERCISES AND MOCK INTERVIEW</h1>
+
+<p>Do these with the repository closed. If you need the code, you have not learned it yet — read the relevant module again and come back. Answers follow the exercise list; do not read them first.</p>
+
+<h2>16.1 The exercises</h2>
+
+<ol>
+  <li>Explain, in five sentences, what happens from the moment a buyer clicks "Connect wallet" to the moment the header shows a pUSD balance.</li>
+  <li>Write out the token approval flow from memory, naming the two contracts, the two transactions and the storage each one changes.</li>
+  <li>Explain why the escrow locks funds, and what would break if the buyer paid the seller directly.</li>
+  <li>Trace one purchase from the React form to the Solidity storage write, naming every file on the way.</li>
+  <li>Describe a complete ERC-20 transaction: who signs, what is encoded, what events are emitted, what changes in storage.</li>
+  <li>Trace one shipment API request end to end, including validation, the chain check and the response code.</li>
+  <li>Explain how CRE fetches shipment status, including which capability, which method, and what happens on failure.</li>
+  <li>Decode an example settlement report by hand: given a 256-byte payload, name the four fields in order and what each contains.</li>
+  <li>Explain how <span class="mono">processReport</span> works, in order, including every check and every revert.</li>
+  <li>Explain the refund flow without looking at this guide.</li>
+  <li>Diagnose an intentionally wrong network: the user is on mainnet, every button is disabled, and no error is shown. What is happening and where?</li>
+  <li>Diagnose an unauthorised oracle: settlement reverts with <span class="mono">UnauthorizedCaller</span>. Give three possible causes and the exact read that distinguishes them.</li>
+  <li>Explain how to verify a transaction receipt, and what you would check to prove a release actually paid the seller.</li>
+</ol>
+
+<h2>16.2 Answers and expected reasoning</h2>
+
+<p><b>1. Connection.</b> <span class="mono">useWallet</span> first calls <span class="mono">eth_accounts</span> (no prompt) to see whether the site is already permitted; if not, the button calls <span class="mono">eth_requestAccounts</span>, MetaMask prompts, and the chosen address is passed to <span class="mono">applyAddress</span>. That function reads <span class="mono">eth_chainId</span> and <span class="mono">eth_getBalance</span>, then writes one state object with the address, chain name, ETH balance and an <span class="mono">isCorrectNetwork</span> flag. A separate token hook reads <span class="mono">balanceOf</span> for pUSD. Nothing is stored in a database; deletion of the extension would not change any of these values on chain.</p>
+
+<p><b>2. Approval.</b> Transaction 1: buyer → pUSD <span class="mono">approve(escrow, amount)</span>, which writes <span class="mono">allowance[buyer][escrow]</span> and emits <span class="mono">Approval</span>. Transaction 2: buyer → escrow <span class="mono">createEscrow</span>, which calls <span class="mono">pUSD.transferFrom(buyer, escrow, amount)</span>; that decrements the allowance, moves balances, and emits <span class="mono">Transfer</span>. The escrow also writes its <span class="mono">Escrow</span> struct and emits <span class="mono">EscrowCreated</span>. The allowance exists so that the token, not the escrow, remains the authority over the buyer's balance.</p>
+
+<p><b>3. Why escrow.</b> Because the only alternative is trusting the counterparty to reverse a bad outcome. If the buyer pays directly, a lost parcel leaves them asking the seller for money; if the seller ships first, they are unsecured. Escrow makes the money conditional and the condition auditable. Removing it would also remove the thing the project sells.</p>
+
+<p><b>4. Purchase trace.</b> <span class="mono">CheckoutPage.tsx</span> validates the form and calls <span class="mono">useEscrowActions</span>, which uses viem to encode <span class="mono">approve</span> and sends it through the injected provider; <span class="mono">MetaMask</span> signs; <span class="mono">ProofPayUSD.sol</span> stores the allowance; then <span class="mono">createEscrow</span> is encoded and sent; <span class="mono">ProofPayEscrow.sol</span> validates, writes the struct, calls the token, emits the event; back in React, <span class="mono">onCreated()</span> triggers <span class="mono">useEscrows</span> to re-read state.</p>
+
+<p><b>5. A complete transfer.</b> The owner signs a transaction calling <span class="mono">transfer(to, amount)</span>; the data is the 4-byte selector plus two 32-byte words; the token checks the balance, subtracts from the sender, adds to the recipient, emits <span class="mono">Transfer(from, to, amount)</span>, and returns true. Two storage slots change; nothing else can alter them afterwards, and the receipt's logs are the permanent evidence.</p>
+
+<p><b>6. Shipment request.</b> React sends <span class="mono">POST /api/shipments</span> with the mutation secret; Express parses JSON (32 kB limit), the middleware authorises, the router calls <span class="mono">register</span>; validation normalises fields; duplicates are rejected; <span class="mono">verifyEscrow</span> performs an RPC <span class="mono">getEscrow</span> and requires status 1 and matching seller; the store appends the record atomically; the response is 201 with a <span class="mono">Location</span> header, or 400/404/409 on failure.</p>
+
+<p><b>7. CRE fetch.</b> <span class="mono">HTTPClient.sendRequest</span> with method GET against <span class="mono">baseUrl + /api/shipments</span>, wrapped in <span class="mono">consensusIdenticalAggregation&lt;string&gt;()</span>; <span class="mono">ok(response)</span> is checked, the body is read as text and parsed defensively. On a non-2xx response or a parse error the handler logs and returns an error string, so the run produces no settlements rather than a partial set.</p>
+
+<p><b>8. Report decoding.</b> Word 1: <span class="mono">bytes32 orderId</span>. Word 2: offset to the outcome string. Word 3: <span class="mono">bytes32 trackingIdHash</span>. Word 4: offset to the timestamp string. The two strings follow dynamically with their lengths. In the observed run, the total was 256 bytes, and the raw report was 365 because of the 109-byte SDK header.</p>
+
+<p><b>9. processReport.</b> <span class="mono">onlyAuthorized</span> → decode four fields → reject zero order ID → compute report ID → reject if <span class="mono">processedReports</span> → reject if <span class="mono">orderSettled</span> → self-call to confirm funding → hash outcome → call <span class="mono">confirmDelivery</span> or <span class="mono">confirmFailure</span> → set both mappings → emit <span class="mono">ReportProcessed</span> and <span class="mono">SettlementExecuted</span>. Any other outcome reverts with <span class="mono">UnsupportedOutcome</span>.</p>
+
+<p><b>10. Refund.</b> Shipment becomes LOST after <span class="mono">IN_TRANSIT</span>; CRE's <span class="mono">shouldSettle</span> returns REFUND with outcome LOST; the escrow is read and must be Funded; the payload is encoded and the report generated; the bridge validates the outcome and the funding, submits <span class="mono">processReport</span>; the receiver checks authorisation, replay, duplicate and funding, then calls <span class="mono">confirmFailure</span>, which writes Refunded and transfers to the buyer. Verified at block 29: buyer +100 pUSD, seller unchanged.</p>
+
+<p><b>11. Wrong network.</b> <span class="mono">applyAddress</span> compared <span class="mono">parseChainId(eth_chainId)</span> against 31337 and set <span class="mono">isCorrectNetwork = false</span>. The dashboard's write actions are gated on that flag, and the banner explains it — if the user sees nothing, the banner is above the fold or the component is reading a stale wallet object. Check the header chip and the console value of <span class="mono">chainId</span>.</p>
+
+<p><b>12. UnauthorisedCaller.</b> Possible causes: (a) the sending account is neither forwarder nor manual oracle, (b) the receiver's manual oracle was rotated and no longer matches the wallet, (c) the escrow's oracle was pointed elsewhere so the receiver's call fails downstream — but note that (c) produces <span class="mono">UnauthorizedOracle</span> from the escrow, not <span class="mono">UnauthorizedCaller</span>. Distinguish with two reads: <span class="mono">receiver.manualOracle()</span> and <span class="mono">escrow.oracle()</span>, compared against the connected address and the receiver address respectively.</p>
+
+<p><b>13. Receipt verification.</b> Fetch by hash, require <span class="mono">status === 1</span>, check <span class="mono">to</span> is the receiver, decode the logs for <span class="mono">EscrowReleased(orderId, seller, amount)</span> and <span class="mono">SettlementExecuted(orderId, true)</span>, then read <span class="mono">getEscrow(orderId)</span> for status 2 and a non-zero <span class="mono">settledAt</span>, and finally compare the seller's <span class="mono">balanceOf</span> before and after — the delta must equal the escrowed amount exactly.</p>
+
+<h2>16.3 Final mock interview: 25 questions</h2>
+
+<p>Answer aloud, in under ninety seconds each. The expected shape is in the brackets; if you cannot fill the bracket, revisit the module named there.</p>
+
+<ol>
+  <li>What problem does ProofPay solve, in one sentence? <i>(Module 1)</i></li>
+  <li>Why is the escrow a contract rather than a bank account? <i>(M3)</i></li>
+  <li>Why does the buyer need two transactions? <i>(M2)</i></li>
+  <li>What exactly does MetaMask store, and what does it not? <i>(M2)</i></li>
+  <li>Why can a smart contract not call the courier API? <i>(M7)</i></li>
+  <li>What is a report, and what is inside yours? <i>(M7)</i></li>
+  <li>Why is there a receiver contract between CRE and the escrow? <i>(M3)</i></li>
+  <li>How do you prevent a double payment, precisely? <i>(M3, M8)</i></li>
+  <li>What does the bridge decide? <i>(M8)</i></li>
+  <li>What does the bridge deliberately not decide? <i>(M8)</i></li>
+  <li>Why 109 bytes, and what would happen if you ignored them? <i>(M7)</i></li>
+  <li>What is the difference between simulation and DON execution? <i>(M7)</i></li>
+  <li>Why is the CRE dry-run still true after settlement worked? <i>(M8)</i></li>
+  <li>Where is the settlement policy implemented, and how many copies exist? <i>(M7)</i></li>
+  <li>Why is shipment status off chain? <i>(M6)</i></li>
+  <li>What prevents a seller from registering someone else's order? <i>(M6)</i></li>
+  <li>What are the three error layers in the frontend? <i>(M5)</i></li>
+  <li>How does the dashboard discover orders without an indexer? <i>(M5)</i></li>
+  <li>Which tests would fail if you removed ReentrancyGuard? <i>(M4)</i></li>
+  <li>What happens if Hardhat restarts mid-demo, and in what order do you recover? <i>(M12)</i></li>
+  <li>What is your biggest security limitation? <i>(M11)</i></li>
+  <li>Why is pUSD not a stablecoin, and why does that matter? <i>(M11)</i></li>
+  <li>What would you change for a real DON deployment? <i>(M8)</i></li>
+  <li>What did you personally decide that a template would not have given you? <i>(M15)</i></li>
+  <li>What would you build next, and why that? <i>(M15)</i></li>
+</ol>
+
+<h1 class="module"><span class="mtag">MODULE 17</span>GLOSSARY</h1>
+
+<p>Every term this project uses, in plain language. Where a term has a specific meaning in this codebase, that meaning is given rather than the general one.</p>
+
+<table class="tbl">
+  <caption>Table 17.1: Glossary of terms used in ProofPay</caption>
+  <thead><tr><th style="width:22%">Term</th><th style="width:78%">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>ABI</td><td>JSON description of a contract's functions, arguments, returns, events and errors; the contract between bytes and JavaScript.</td></tr>
+    <tr><td>ABI encoding</td><td>The canonical byte layout (32-byte words, offsets for dynamic types) used to pass arguments and decode results.</td></tr>
+    <tr><td>Account</td><td>An address with a balance; may also have code and storage if it is a contract.</td></tr>
+    <tr><td>Address</td><td>20-byte identifier, written as 40 hex characters with a 0x prefix.</td></tr>
+    <tr><td>Allowance</td><td>How much a spender may still take from an owner under ERC-20.</td></tr>
+    <tr><td>Allowlist (bridge)</td><td><span class="mono">BRIDGE_ORDER_ALLOWLIST</span>: optional set of order IDs a bridge run may submit.</td></tr>
+    <tr><td>Approval</td><td>ERC-20 event emitted when an allowance is set.</td></tr>
+    <tr><td>Approve</td><td>ERC-20 function that grants a spending cap to a spender.</td></tr>
+    <tr><td>Atomic write</td><td>Writing to a temporary file then renaming, so a crash cannot leave a half-written JSON store.</td></tr>
+    <tr><td>Bigint</td><td>JavaScript's arbitrary-precision integer type, used for all token amounts.</td></tr>
+    <tr><td>Block</td><td>A batch of transactions with a header that commits to the previous block's hash.</td></tr>
+    <tr><td>Block number</td><td>The position of a block in the chain; recorded with every settlement in this project.</td></tr>
+    <tr><td>Bridge (local execution bridge)</td><td><span class="mono">local-runner.ts</span>: runs the CRE simulator, validates its report, submits it to the receiver, verifies the receipt.</td></tr>
+    <tr><td>Bytecode</td><td>Compiled contract code deployed to an address; <span class="mono">eth_getCode</span> returning <span class="mono">0x</span> means nothing is deployed.</td></tr>
+    <tr><td>Calldata</td><td>Read-only bytes passed into a function call; where the 256-byte report arrives at the receiver.</td></tr>
+    <tr><td>Chain ID</td><td>Network identifier signed into transactions; 31337 here, preventing cross-chain replay.</td></tr>
+    <tr><td>Checks-effects-interactions</td><td>Pattern of validating, writing state, then making external calls — used by the escrow before transfers.</td></tr>
+    <tr><td>Consensus</td><td>Agreement among nodes on the next valid state; in oracle networks, agreement on a reported fact.</td></tr>
+    <tr><td>Consensus aggregation</td><td>CRE wrapper requiring nodes to produce identical results before proceeding; present in the HTTP call but only single-node in simulation.</td></tr>
+    <tr><td>Contract account</td><td>An account with code, controlled only by being called.</td></tr>
+    <tr><td>Courier scheduler</td><td><span class="mono">courier-scheduler.ts</span>: advances demo shipment statuses and optionally triggers the pipeline.</td></tr>
+    <tr><td>Cron trigger</td><td>Schedule-based workflow trigger; <span class="mono">0 */5 * * * *</span> here.</td></tr>
+    <tr><td>Custom error</td><td>Typed Solidity revert with optional arguments, cheaper and more testable than strings.</td></tr>
+    <tr><td>Decentralisation</td><td>Degree to which no single party can unilaterally decide outcomes; partial in this project, by design and by disclosure.</td></tr>
+    <tr><td>Decimals</td><td>Display scaling for a token; 18 for pUSD, so 1 pUSD = 10<sup>18</sup> base units.</td></tr>
+    <tr><td>Deterministic execution</td><td>Every node computes the same result from the same inputs; the reason HTTP cannot run inside the EVM.</td></tr>
+    <tr><td>DON</td><td>Decentralised oracle network: independent nodes that must agree before reporting. Not deployed here.</td></tr>
+    <tr><td>dryRun</td><td>CRE configuration that generates reports but skips <span class="mono">writeReport</span>; true in this project.</td></tr>
+    <tr><td>ECDSA</td><td>The signature scheme (over secp256k1) used by Ethereum accounts.</td></tr>
+    <tr><td>EIP-1193</td><td>Standard for the injected wallet provider at <span class="mono">window.ethereum</span>.</td></tr>
+    <tr><td>EIP-165</td><td>Interface detection standard; the receiver advertises <span class="mono">IReceiver</span> through <span class="mono">supportsInterface</span>.</td></tr>
+    <tr><td>EOA</td><td>Externally owned account: controlled by a private key and able to start transactions.</td></tr>
+    <tr><td>ERC-20</td><td>Standard fungible token interface: balances, transfers, allowances, two events.</td></tr>
+    <tr><td>Escrow</td><td>Conditional custody of funds by a neutral party or contract; here, <span class="mono">ProofPayEscrow</span>.</td></tr>
+    <tr><td>Event (log)</td><td>Permanent record in a transaction receipt; readable off chain, not by contracts.</td></tr>
+    <tr><td>EVM</td><td>Ethereum Virtual Machine: the deterministic computer that executes contract bytecode.</td></tr>
+    <tr><td>EVM capability</td><td>CRE facility for reading (and, when enabled, writing) chain state via a chain selector.</td></tr>
+    <tr><td>Express</td><td>Minimal Node.js HTTP framework used for the shipment API.</td></tr>
+    <tr><td>Forwarder</td><td>Address authorised to deliver CRE reports to the receiver; zero in this local deployment.</td></tr>
+    <tr><td>Function selector</td><td>First four bytes of <span class="mono">keccak256("name(types)")</span>; identifies the function in calldata.</td></tr>
+    <tr><td>Gas</td><td>Unit of computational work; priced in the native currency.</td></tr>
+    <tr><td>Gas limit</td><td>Maximum gas a transaction may consume; unused gas is refunded.</td></tr>
+    <tr><td>Gas price</td><td>Price per gas unit offered by the sender.</td></tr>
+    <tr><td>Hardhat</td><td>Ethereum development environment: compiler, test runner, scripting and local node.</td></tr>
+    <tr><td>Hardhat node</td><td>The local JSON-RPC chain on port 8545 with deterministic unlocked accounts.</td></tr>
+    <tr><td>Hash</td><td>Fixed-length fingerprint of arbitrary data; Keccak-256 here.</td></tr>
+    <tr><td>HTTP capability</td><td>CRE facility for making web requests, with optional consensus across nodes.</td></tr>
+    <tr><td>Idempotency</td><td>Property that repeating an operation has the same effect as doing it once; required for settlement.</td></tr>
+    <tr><td>Immutability</td><td>Practical infeasibility of rewriting history; absent on a restarted local chain.</td></tr>
+    <tr><td>Interface</td><td>A Solidity declaration of function signatures without implementation, used to type external calls.</td></tr>
+    <tr><td>JSON</td><td>Text data format used by the API, configuration and deployment records.</td></tr>
+    <tr><td>JSON-RPC</td><td>Protocol used to call node methods over HTTP, e.g. <span class="mono">eth_call</span>.</td></tr>
+    <tr><td>Keccak-256</td><td>Ethereum's hash function producing 32 bytes; used for selectors, report IDs and tracking hashes.</td></tr>
+    <tr><td>Lock file</td><td>File created exclusively to prevent two instances of the bridge or scheduler running at once.</td></tr>
+    <tr><td>Manual oracle</td><td>Receiver role allowing a fallback reporter, used here for local and admin settlement.</td></tr>
+    <tr><td>Mapping</td><td>Solidity key-value storage; every key exists with a zero default.</td></tr>
+    <tr><td>Mempool</td><td>Pending transactions waiting to be included in a block.</td></tr>
+    <tr><td>Metadata (report)</td><td>SDK-provided 109-byte header in a raw CRE report, stripped before the receiver sees the payload.</td></tr>
+    <tr><td>MetaMask</td><td>Browser wallet storing keys, signing transactions and injecting the provider.</td></tr>
+    <tr><td>Mint</td><td>Creating new token supply; owner-only in pUSD.</td></tr>
+    <tr><td>Modifier</td><td>Reusable condition wrapped around a function body; <span class="mono">onlyOracle</span>, <span class="mono">nonReentrant</span>.</td></tr>
+    <tr><td>msg.sender</td><td>The immediate caller of a function; the receiver, when it settles an escrow.</td></tr>
+    <tr><td>msg.value</td><td>Native currency sent with a call; always zero here, since no function is payable.</td></tr>
+    <tr><td>Nonce</td><td>Per-account transaction counter preventing replay and enforcing order.</td></tr>
+    <tr><td>Off-chain / on-chain</td><td>Computed and stored outside the ledger versus inside it.</td></tr>
+    <tr><td>Opcode</td><td>A single EVM instruction; the target of Solidity compilation.</td></tr>
+    <tr><td>Oracle</td><td>Component delivering external facts to a blockchain.</td></tr>
+    <tr><td>Oracle problem</td><td>The difficulty of getting trustworthy external data into a system that cannot verify it.</td></tr>
+    <tr><td>Ownable / onlyOwner</td><td>OpenZeppelin module granting a single address configuration rights.</td></tr>
+    <tr><td>Preflight</td><td>The bridge's read-only checks (chain, bytecode, signer, wiring, gas) before any submission.</td></tr>
+    <tr><td>Private key</td><td>256-bit secret that signs transactions; never stored in this repository.</td></tr>
+    <tr><td>Provenance</td><td>Information about how a report was produced: source slice, lengths, hashes, addresses.</td></tr>
+    <tr><td>pUSD</td><td>ProofPay USD, the prototype ERC-20 used for escrowed value.</td></tr>
+    <tr><td>Receipt</td><td>Node's record of an executed transaction: status, gas used, logs, block number.</td></tr>
+    <tr><td>Reentrancy</td><td>Attack where an external call re-enters the caller before state is final.</td></tr>
+    <tr><td>ReentrancyGuard</td><td>OpenZeppelin modifier preventing reentrant entry.</td></tr>
+    <tr><td>Refund</td><td>Returning escrowed funds to the buyer when the shipment is lost.</td></tr>
+    <tr><td>Release</td><td>Paying the seller when delivery is confirmed.</td></tr>
+    <tr><td>Report (CRE)</td><td>ABI-encoded payload plus SDK metadata header, produced by <span class="mono">runtime.report</span>.</td></tr>
+    <tr><td>Report ID</td><td>Hash of order, outcome, tracking hash, timestamp and metadata; the replay-protection key.</td></tr>
+    <tr><td>Replay attack</td><td>Resubmitting a valid message a second time to repeat its effect.</td></tr>
+    <tr><td>REST</td><td>API style using URLs for resources and HTTP verbs for intent.</td></tr>
+    <tr><td>Revert</td><td>Aborting execution and undoing all state changes, optionally with a reason.</td></tr>
+    <tr><td>RPC</td><td>Remote procedure call: the HTTP interface to a node.</td></tr>
+    <tr><td>SafeERC20</td><td>Wrapper checking token call results so failures cannot be ignored.</td></tr>
+    <tr><td>Seed phrase</td><td>12–24 words from which all wallet keys are derived.</td></tr>
+    <tr><td>Settlement</td><td>The irreversible payout of an escrow, to seller or buyer.</td></tr>
+    <tr><td>Signature</td><td>Cryptographic proof that a key holder approved specific bytes.</td></tr>
+    <tr><td>Simulation (CRE)</td><td>Running a workflow locally through the CLI, one node, real code.</td></tr>
+    <tr><td>Smart contract</td><td>Program on a blockchain with persistent storage and deterministic execution.</td></tr>
+    <tr><td>Solidity</td><td>The contract language used here, version 0.8.28.</td></tr>
+    <tr><td>State file (bridge)</td><td><span class="mono">.local-bridge-state.json</span>: records successful submissions to prevent duplicates.</td></tr>
+    <tr><td>State variable</td><td>Permanent storage declared at contract level.</td></tr>
+    <tr><td>struct</td><td>Grouped fields under one type; the <span class="mono">Escrow</span> record.</td></tr>
+    <tr><td>Testnet</td><td>Chain with valueless currency for development; not used in this deployment.</td></tr>
+    <tr><td>Tracking ID</td><td>Courier reference such as <span class="mono">PPD-DEMO-LOST</span>; stored off chain, hashed on chain.</td></tr>
+    <tr><td>Transaction</td><td>Signed instruction that changes chain state.</td></tr>
+    <tr><td>Transaction hash</td><td>Keccak-256 of the signed transaction; its unique identifier.</td></tr>
+    <tr><td>transfer / transferFrom</td><td>ERC-20 functions moving your own balance, or a spender's allowance.</td></tr>
+    <tr><td>TypeScript</td><td>Typed superset of JavaScript used in the frontend, scripts and workflow.</td></tr>
+    <tr><td>Upgradeability</td><td>Ability to replace contract code behind a proxy; deliberately absent here.</td></tr>
+    <tr><td>viem</td><td>TypeScript Ethereum library used for ABI encoding, reads and transaction sending.</td></tr>
+    <tr><td>Wallet</td><td>Software holding keys and signing; it does not hold the assets.</td></tr>
+    <tr><td>Workflow (CRE)</td><td>TypeScript program with a trigger and handler, run in simulation or on a DON.</td></tr>
+    <tr><td>writeReport</td><td>CRE call that submits a report to a receiver on a supported chain; unreachable while dry-run is true.</td></tr>
+    <tr><td>Zero address</td><td><span class="mono">0x000…000</span>: a burn address; used here to mean "no forwarder configured".</td></tr>
+  </tbody>
+</table>
+
+<h2>17.1 How to keep learning after this book</h2>
+
+<p>Three habits will carry you further than any tutorial. Re-derive, do not re-read: when you forget how the receiver works, write its checks from memory and compare. Change one thing in the repository and predict the failure before running it — set <span class="mono">dryRun</span> false on CRE while the bridge runs and see which check refuses; remove the allowlist and see two orders become eligible. And explain it to someone who does not code: the moment you can describe an oracle without the word "oracle", you understand it.</p>
+
+<p>Finally, keep the honesty rule. The most impressive thing you can say about ProofPay is not that it is decentralised, but that you know exactly where it is not, why that choice was made, and what would have to change. That is what separates an engineer who used a tool from one who understands it.</p>
+
+<p class="endnote">End of the ProofPay Master Guide. Every code excerpt is from the repository; every transaction figure was read from the local Hardhat chain; every limitation named here is named in the project report as well.</p>

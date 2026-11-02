@@ -1,0 +1,242 @@
+<h1 class="module"><span class="mtag">MODULE 14 &middot; PART B</span>INTERVIEW AND VIVA BANK: LEVELS 4&ndash;5</h1>
+
+<h2>14.4 Level 4 &mdash; advanced technical</h2>
+
+<div class="qa"><p class="q"><span class="qn">Q66.</span> Walk me through CRE report generation.</p>
+<div class="a"><p><b>Short:</b> encode the four fields, wrap in <span class="mono">prepareReportRequest</span>, call <span class="mono">runtime.report(...).result()</span>, then extract the body. <b>Reasoning:</b> the SDK adds a metadata header the receiver must not see. <b>Instance:</b> 256-byte payload, 365-byte raw report, source reported as <span class="mono">body</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q67.</span> How exactly is the report encoded?</p>
+<div class="a"><p><b>Short:</b> <span class="mono">abi.encode(bytes32, string, bytes32, string)</span> — the order ID word, then a dynamic string, then a word, then a dynamic string. <b>Reasoning:</b> dynamic types use offsets, which is why the fixed part is four 32-byte words and the strings trail behind. <b>Instance:</b> the receiver uses one <span class="mono">abi.decode</span> with the same signature.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q68.</span> Why 109 bytes, and why does it matter?</p>
+<div class="a"><p><b>Short:</b> that is <span class="mono">REPORT_METADATA_HEADER_LENGTH</span>, the SDK's provenance prefix; the receiver decodes only the body. <b>Reasoning:</b> passing the raw report would shift every field by 109 bytes and fail to decode. <b>Instance:</b> 365 − 256 = 109, which is the arithmetic proof the strip was correct.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q69.</span> How does replay protection actually work?</p>
+<div class="a"><p><b>Short:</b> the receiver hashes the whole report and refuses a hash it has seen. <b>Reasoning:</b> identical bytes always produce the same digest, so a replay is detectable without storing the report. <b>Instance:</b> <span class="mono">keccak256(abi.encodePacked(orderId, outcome, trackingIdHash, observedAt, metadata))</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q70.</span> Why do you need a second mapping for duplicate settlements?</p>
+<div class="a"><p><b>Short:</b> because a different report on a settled order produces a different report ID. <b>Reasoning:</b> without <span class="mono">orderSettled</span>, changing the timestamp would bypass replay protection. <b>Instance:</b> the escrow's Funded check would still block payment, but the receiver would waste gas and emit a misleading attempt.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q71.</span> Why can't the CRE SDK target local Hardhat?</p>
+<div class="a"><p><b>Short:</b> the installed SDK has no chain selector for chain ID 31337. <b>Reasoning:</b> selectors are an allow-list of supported networks, and local dev chains are not in it. <b>Instance:</b> the code calls <span class="mono">getNetwork</span> with a Sepolia selector because that is what compiles and runs; this is exactly why the bridge exists and why no CRE write is claimed.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q72.</span> Simulation versus DON deployment — what is the real difference?</p>
+<div class="a"><p><b>Short:</b> simulation runs your workflow in the CLI on one machine; deployment registers it with a DON where multiple operators execute it and agree. <b>Reasoning:</b> consensus, availability and signing authority all change. <b>Instance:</b> locally <span class="mono">dryRun</span> is true and a bridge relays; on a DON the workflow would write the report itself.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q73.</span> What exactly would you change for a DON deployment?</p>
+<div class="a"><p><b>Short:</b> deploy the workflow, flip <span class="mono">dryRun</span> to false, expose the API over HTTPS, set the receiver's <span class="mono">forwarder</span>, remove the owner fallback, delete the bridge. <b>Reasoning:</b> each change moves one responsibility from the local machine to the network. <b>Instance:</b> the escrow needs no change at all, because its oracle is already the receiver.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q74.</span> How does the receiver communicate with the escrow?</p>
+<div class="a"><p><b>Short:</b> it holds an immutable <span class="mono">IEscrowSettlement</span> reference and calls <span class="mono">confirmDelivery</span> or <span class="mono">confirmFailure</span>. <b>Reasoning:</b> because the receiver is the escrow's <span class="mono">oracle</span>, those calls satisfy <span class="mono">onlyOracle</span> without any EOA having that power. <b>Instance:</b> the escrow sees <span class="mono">msg.sender = receiver</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q75.</span> What happens if report submission fails?</p>
+<div class="a"><p><b>Short:</b> the bridge reports the failure, decodes the revert, exits non-zero and records nothing. <b>Reasoning:</b> no state file entry means the submission is not falsely considered done; no retry means no duplicate risk. <b>Instance:</b> the operator fixes the cause (funding, wiring, authorisation) and runs again deliberately.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q76.</span> What if the transaction reverts after gas was spent?</p>
+<div class="a"><p><b>Short:</b> all state changes are undone; only gas is consumed. <b>Reasoning:</b> the EVM is atomic across the whole call tree. <b>Instance:</b> a reverted <span class="mono">processReport</span> leaves the escrow Funded and the mappings untouched, so a corrected retry is safe.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q77.</span> How would this scale to production?</p>
+<div class="a"><p><b>Short:</b> deploy the contracts to a public chain, run the workflow on a DON, replace the JSON store with a database, index events for the UI, use a KMS-backed signer for any manual path. <b>Reasoning:</b> each change addresses a specific local shortcut, not the architecture. <b>Instance:</b> the contract interfaces and the report format stay identical.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q78.</span> Where does the gas go in a settlement?</p>
+<div class="a"><p><b>Short:</b> mostly the token transfer, the two mapping writes, the escrow state write and the events. <b>Reasoning:</b> storage writes dominate; logs are cheaper. <b>Instance:</b> ~122,000 gas for <span class="mono">processReport</span> versus ~71,000 for a direct <span class="mono">confirmDelivery</span>; the ~51,000 difference is the policy layer's price.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q79.</span> Why terminal states instead of a reversible flag?</p>
+<div class="a"><p><b>Short:</b> because reversibility is the property an attacker needs. <b>Reasoning:</b> a reversible payout invites governance capture and makes balances non-final. <b>Instance:</b> the escrow's enum has no path back to Funded, and there is no admin rescue.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q80.</span> No upgradeability — is that a strength or a flaw?</p>
+<div class="a"><p><b>Short:</b> both, and you should say both. <b>Reasoning:</b> strength: no proxy admin can rewrite the rules; flaw: a bug is permanent and migration means a new deployment and manual fund movement. <b>Instance:</b> the project mitigates with a small surface, audited primitives and 31 tests rather than an upgrade path.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q81.</span> How would you add a second payment token?</p>
+<div class="a"><p><b>Short:</b> make the escrow's token per-order rather than immutable, or deploy one escrow per token. <b>Reasoning:</b> the immutable token is a deliberate simplification; multi-token support means storing the token address in the Escrow struct and validating it against a registry. <b>Instance:</b> the receiver would not change, because the escrow still owns payouts.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q82.</span> How would partial refunds work?</p>
+<div class="a"><p><b>Short:</b> a new settlement function that splits the amount and a report outcome that carries a basis-points field. <b>Reasoning:</b> the current payload has no room for an amount, and adding one changes the receiver's ABI. <b>Instance:</b> this is future work, listed in the report, not implemented.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q83.</span> What if the user switches accounts mid-checkout?</p>
+<div class="a"><p><b>Short:</b> <span class="mono">accountsChanged</span> re-runs <span class="mono">applyAddress</span>, the address changes, and the pending transaction is signed by the new account. <b>Reasoning:</b> the wallet is the authority, so the UI must follow it rather than cache an address. <b>Instance:</b> that is why <span class="mono">useWallet</span> exposes a <span class="mono">refresh</span> and subscribes to events.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q84.</span> Two orders for the same seller — any interference?</p>
+<div class="a"><p><b>Short:</b> none: state is keyed by order ID, and settlements are independent. <b>Reasoning:</b> the escrow mapping is per order, so one release cannot affect another. <b>Instance:</b> a test named "settles multiple escrows independently" pins exactly this.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q85.</span> How do you test the oracle without a real courier?</p>
+<div class="a"><p><b>Short:</b> with a deterministic simulated API and a scheduler that advances statuses. <b>Reasoning:</b> the oracle's job is to read a source, not to trust it, so a fake source exercises the same code path. <b>Instance:</b> the workflow's logs show it processing real records from the Express API, including skip and error branches.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q86.</span> What does idempotency mean in this system?</p>
+<div class="a"><p><b>Short:</b> running the pipeline twice has the same effect as running it once. <b>Reasoning:</b> settlement is the only irreversible effect, so it must be exactly-once, while report generation is safely repeatable. <b>Instance:</b> CRE may emit the same report again; the receiver and bridge both refuse it.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q87.</span> How would an auditor verify a settlement afterwards?</p>
+<div class="a"><p><b>Short:</b> take the transaction hash, read the receipt, decode <span class="mono">ReportProcessed</span> for the report ID and outcome, read <span class="mono">getEscrow</span> for the final state, and check token balances. <b>Reasoning:</b> the chain is self-describing; nothing depends on the app. <b>Instance:</b> that is precisely what the verification script produced for blocks 24, 29 and 30.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q88.</span> Why <span class="mono">uint64</span> for timestamps?</p>
+<div class="a"><p><b>Short:</b> to pack two timestamps with an address and an enum into fewer storage slots. <b>Reasoning:</b> storage is charged per slot, so smaller types reduce gas when they share a slot. <b>Instance:</b> <span class="mono">createdAt</span> and <span class="mono">settledAt</span> are both <span class="mono">uint64</span> and will not overflow for billions of years.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q89.</span> Why does the receiver take a <span class="mono">metadata</span> parameter that is always <span class="mono">0x</span>?</p>
+<div class="a"><p><b>Short:</b> because the CRE/Chainlink receiver interface requires it, and the local path passes empty bytes. <b>Reasoning:</b> keeping the signature identical means a DON can call <span class="mono">onReport</span> without code changes. <b>Instance:</b> metadata still contributes to the report ID, so two otherwise identical reports with different metadata are distinct.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q90.</span> What happens to the allowance after settlement?</p>
+<div class="a"><p><b>Short:</b> it was already consumed at funding; settlement uses <span class="mono">transfer</span> from the escrow's own balance, not an allowance. <b>Reasoning:</b> the escrow owns the tokens, so it needs no permission to move them. <b>Instance:</b> after a purchase the buyer's allowance to the escrow returns to zero for that amount.</p></div></div>
+
+<h2>14.5 Level 5 &mdash; the challenging questions</h2>
+
+<div class="qa"><p class="q"><span class="qn">Q91.</span> Why should I trust the courier API?</p>
+<div class="a"><p><b>Short:</b> you should not trust it blindly — you should bound what a lie can achieve. <b>Reasoning:</b> a false status can cause a wrong settlement, but only for a funded, unsettled order, only once, and only through an authorised report. <b>Instance:</b> the design mitigations are the on-chain funding re-check, replay protection, and the audit trail that records which report justified the payout. A production system would add a real carrier's signed webhooks or multiple independent sources.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q92.</span> What if the seller manipulates shipment status?</p>
+<div class="a"><p><b>Short:</b> they can make a parcel look delivered, but they cannot make money appear. <b>Reasoning:</b> settlement requires a funded escrow and a valid report, and the seller cannot call the escrow or the receiver. <b>Instance:</b> the worst case is early release on an order the buyer actually funded — a fraud that leaves a permanent, attributable on-chain record rather than an untraceable one.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q93.</span> The courier says DELIVERED but the buyer never received the parcel. What then?</p>
+<div class="a"><p><b>Short:</b> this is the system's hardest case, and the honest answer is that it is a dispute, not a bug. <b>Reasoning:</b> the oracle reports what the data source says; a wrong data source yields a wrong but valid settlement. <b>Instance:</b> mitigation today is the manual-review path and off-chain recourse; the report lists arbitration and multi-source verification as future work. Never claim the design solves physical fraud.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q94.</span> What stops a seller from generating a false delivery report?</p>
+<div class="a"><p><b>Short:</b> the report is not produced by the seller — it is produced by CRE from the API record, and accepted only from an authorised caller. <b>Reasoning:</b> the seller's leverage is limited to the API's write access, which is protected by a server-side secret and validated transitions. <b>Instance:</b> even a forged API record still needs a funded escrow and passes the receiver's single-settlement checks.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q95.</span> What if Chainlink returns incorrect information?</p>
+<div class="a"><p><b>Short:</b> the report would be wrong, and the contracts cannot detect that — they can only enforce authorisation and uniqueness. <b>Reasoning:</b> an oracle is a trust boundary; a DON reduces the chance of error or collusion but does not eliminate it. <b>Instance:</b> locally, one simulator runs the workflow, so the trust is even more concentrated; that is stated explicitly rather than glossed.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q96.</span> What if the bridge is compromised?</p>
+<div class="a"><p><b>Short:</b> it could suppress reports or submit a forged one, and the receiver would accept the forgery because the caller is authorised. <b>Reasoning:</b> authority is by address, not by content signature. <b>Instance:</b> the damage is bounded to one payout per funded order, and every submission is recorded on chain. A DON removes the bridge entirely, which is the real fix.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q97.</span> What if an admin key is stolen?</p>
+<div class="a"><p><b>Short:</b> the thief can reconfigure the oracle, mint pUSD, and settle through the manual path — but cannot directly drain escrowed funds to an arbitrary address. <b>Reasoning:</b> there is no sweep function; the escrow only pays the recorded buyer or seller. <b>Instance:</b> the mitigations are owner separation, event logging of every configuration change, and the recommendation of a multisig in production.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q98.</span> Why is a local execution bridge needed at all?</p>
+<div class="a"><p><b>Short:</b> because the SDK cannot address Hardhat and no DON was available, yet the settlement still had to be demonstrated for real. <b>Reasoning:</b> the alternative was either no on-chain settlement or a fake UI claim; the bridge keeps CRE as the decision-maker and produces real transactions. <b>Instance:</b> three verified settlements exist because of it.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q99.</span> Is your system actually decentralised?</p>
+<div class="a"><p><b>Short:</b> no — the custody and rules are on chain, but the oracle path is centralised in this deployment. <b>Reasoning:</b> one simulator, one bridge machine, one authorised account, one simulated data source. <b>Instance:</b> the honest phrasing is "trust-minimised custody with a centralised oracle, architected for a DON". Claiming more would be false and easily challenged.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q100.</span> Why didn't you deploy the workflow on the DON?</p>
+<div class="a"><p><b>Short:</b> access to a deployed DON was not available in this environment, and the SDK lacks a local chain selector. <b>Reasoning:</b> both are external constraints, not design choices. <b>Instance:</b> the workflow was still written to DON conventions — consensus aggregation, report interface, forwarder role — so deployment is a configuration change rather than a rewrite.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q101.</span> How is this different from traditional escrow?</p>
+<div class="a"><p><b>Short:</b> custody and rules are code, decisions are evidenced, and settlement is automatic. <b>Reasoning:</b> a traditional agent holds money and a human judges delivery; here no one holds the money and the judgement is a report you can audit. <b>Instance:</b> the buyer can verify the escrowed balance and the settlement transaction without asking anyone.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q102.</span> What would happen if Hardhat were restarted?</p>
+<div class="a"><p><b>Short:</b> every deployment, balance and escrow disappears; the addresses are reusable only after redeploying. <b>Reasoning:</b> the chain is in memory. <b>Instance:</b> the recovery order is redeploy → authorise → mint → re-register shipments; the bridge's preflight reports exactly which step is missing.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q103.</span> What happens if the API becomes unavailable?</p>
+<div class="a"><p><b>Short:</b> CRE logs an HTTP error and settles nothing; the system fails safe. <b>Reasoning:</b> no data means no decision, which is preferable to guessing. <b>Instance:</b> escrows remain Funded and can be settled later or manually, so availability affects liveness, not safety.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q104.</span> What if a shipment is returned after delivery?</p>
+<div class="a"><p><b>Short:</b> if it was already released, nothing automatic happens; if it is still funded, CRE routes RETURNED to manual review and emits no settlement report. <b>Reasoning:</b> a return after delivery is a dispute about facts, not a courier status. <b>Instance:</b> <span class="mono">shouldSettle</span> returns <span class="mono">MANUAL_REVIEW</span>, and the receiver would reject such an outcome anyway.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q105.</span> What is the single biggest limitation?</p>
+<div class="a"><p><b>Short:</b> the trust boundary at the oracle: a simulated data source and a single local relay. <b>Reasoning:</b> every other component is either enforced by code or verified by tests; this one rests on operational honesty. <b>Instance:</b> the contracts bound the consequences to one payout per funded order, which is why the limitation is survivable but must be stated first, not last.</p></div></div>
+
+<h2>14.6 Rapid fire</h2>
+
+<div class="qa"><p class="q"><span class="qn">Q106.</span> <span class="mono">msg.sender</span> versus <span class="mono">tx.origin</span>?</p>
+<div class="a"><p><b>Short:</b> <span class="mono">msg.sender</span> is the immediate caller; <span class="mono">tx.origin</span> is the EOA that started the chain. <b>Reasoning:</b> authorising on <span class="mono">tx.origin</span> enables phishing through an intermediate contract. <b>Instance:</b> ProofPay uses <span class="mono">msg.sender</span> everywhere, which is why the escrow sees the receiver as its caller.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q107.</span> Why not approve an unlimited allowance?</p>
+<div class="a"><p><b>Short:</b> because the approved spender could take everything at any time. <b>Reasoning:</b> least privilege; an exact approval limits blast radius to one order. <b>Instance:</b> ProofPay approves the order amount and the allowance is consumed at funding.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q108.</span> What is front-running, and are you exposed?</p>
+<div class="a"><p><b>Short:</b> observing a pending transaction and submitting one that profits from it. <b>Reasoning:</b> on a public mempool, transaction content and ordering are visible. <b>Instance:</b> ProofPay's settlement is keyed to a specific order and payee, so there is no price to manipulate; on a local chain there is no mempool race at all.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q109.</span> Calldata, memory and storage — one line each?</p>
+<div class="a"><p><b>Short:</b> calldata is immutable function input, memory is temporary working space, storage is permanent chain state. <b>Instance:</b> the report arrives as calldata, is decoded into memory, and only the two booleans and the escrow struct reach storage.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q110.</span> Why is the escrow's mapping private?</p>
+<div class="a"><p><b>Short:</b> because a getter that reverts on unknown orders is a better API than one returning a zeroed struct. <b>Reasoning:</b> silent zero values are a classic source of bugs. <b>Instance:</b> <span class="mono">getEscrow</span> reverts with <span class="mono">EscrowNotFound</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q111.</span> Why does the report ID include the metadata?</p>
+<div class="a"><p><b>Short:</b> so two reports that differ only in provenance are treated as distinct. <b>Reasoning:</b> the metadata is part of what the caller asserted. <b>Instance:</b> locally metadata is <span class="mono">0x</span>, so it contributes nothing, but the interface stays DON-compatible.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q112.</span> What if two reports arrive with identical fields in the same second?</p>
+<div class="a"><p><b>Short:</b> the second is rejected — identical bytes give an identical report ID. <b>Reasoning:</b> the tick is part of the report only if the source's timestamp is; identical timestamps mean a true duplicate. <b>Instance:</b> that is the behaviour you want; a genuine second settlement attempt must fail.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q113.</span> What if the bridge's state file is deleted?</p>
+<div class="a"><p><b>Short:</b> replay protection moves entirely to the chain, which already covers it. <b>Reasoning:</b> the state file is a convenience for idempotent local runs, not the security boundary. <b>Instance:</b> a resubmission would revert with <span class="mono">ReportAlreadyProcessed</span> or <span class="mono">OrderAlreadySettled</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q114.</span> What if two bridges run at once?</p>
+<div class="a"><p><b>Short:</b> the lock file prevents it; if forced, the chain prevents a double payout. <b>Reasoning:</b> both would compute the same report ID and only one transaction could succeed. <b>Instance:</b> the observed runs show one submission per order and one block of advancement.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q115.</span> What if CRE emits MANUAL_REVIEW as a settlement?</p>
+<div class="a"><p><b>Short:</b> the bridge refuses it and the receiver would revert with <span class="mono">UnsupportedOutcome</span>. <b>Reasoning:</b> the system only has two payouts, and neither means "a human should look at this". <b>Instance:</b> <span class="mono">shouldSettle</span> never produces an outcome for RETURNED, so this is belt and braces.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q116.</span> Why is the seller's address checked in the backend as well as the escrow?</p>
+<div class="a"><p><b>Short:</b> defence in depth and better errors. <b>Reasoning:</b> the escrow check would only fail at settlement, long after the mistake. <b>Instance:</b> <span class="mono">SELLER_MISMATCH</span> is returned at registration time.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q117.</span> What is the role of <span class="mono">block.timestamp</span> in your design?</p>
+<div class="a"><p><b>Short:</b> recording when an escrow was created and settled. <b>Reasoning:</b> it is consensus-agreed and monotonic enough for audit timestamps, but miners can nudge it slightly, so it must never gate security. <b>Instance:</b> no authorisation or amount logic depends on it.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q118.</span> Why not store the tracking ID on chain?</p>
+<div class="a"><p><b>Short:</b> cost and privacy. <b>Reasoning:</b> arbitrary-length strings cost storage and leak parcel identity. <b>Instance:</b> the hash gives evidence without exposure, and the receiver only needs it for the report ID.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q119.</span> How do you know the frontend is not lying?</p>
+<div class="a"><p><b>Short:</b> because it reads the chain rather than trusting a server, and every displayed value can be re-derived with an independent RPC call. <b>Reasoning:</b> the UI could still be malicious, but it cannot fabricate a balance that the chain disagrees with. <b>Instance:</b> the verification script reproduces the dashboard's numbers from <span class="mono">getEscrow</span> and <span class="mono">balanceOf</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q120.</span> What is the point of the <span class="mono">EscrowCreated</span> event if the UI re-reads state?</p>
+<div class="a"><p><b>Short:</b> discovery and indexing. <b>Reasoning:</b> there is no enumerable list of mapping keys on chain, so an event is the only efficient way to learn which IDs exist. <b>Instance:</b> <span class="mono">useEscrows</span> filters logs on the event topic and the escrow address.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q121.</span> Why does the receiver use a self-call for the funding check?</p>
+<div class="a"><p><b>Short:</b> so a missing escrow becomes <span class="mono">EscrowNotFound</span> instead of a raw revert from the external call. <b>Reasoning:</b> typed errors are easier to test and to explain. <b>Instance:</b> <span class="mono">try this._checkEscrowFunded(orderId) ... catch { revert EscrowNotFound(orderId); }</span>.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q122.</span> Why does the bridge read the escrow again if CRE already did?</p>
+<div class="a"><p><b>Short:</b> because time passed and state can change between the simulation and the submission. <b>Reasoning:</b> the read is a preflight, not a second decision; it prevents wasting gas on an order that closed. <b>Instance:</b> the dry-run log prints the seller and the 100 pUSD amount from that read.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q123.</span> What would you do differently if you started again?</p>
+<div class="a"><p><b>Short:</b> design the report export before the first settlement, and keep the bridge's validation and the contract's checks generated from one schema. <b>Reasoning:</b> the dry-run ordering bug cost real time and was only visible once exports were attempted. <b>Instance:</b> a shared report schema would also have made the report ID derivation impossible to drift.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q124.</span> Which part of this project are you proudest of, technically?</p>
+<div class="a"><p><b>Short:</b> the demonstration that both outcomes can be executed and independently verified, with the decision provably outside the relay. <b>Reasoning:</b> the interesting engineering is the boundary design, not the contracts. <b>Instance:</b> the allowlist run where CRE reported two shipments and exactly one transaction resulted.</p></div></div>
+
+<div class="qa"><p class="q"><span class="qn">Q125.</span> If I gave you one week, what would you add?</p>
+<div class="a"><p><b>Short:</b> a Sepolia deployment with a verified receiver and a DON-hosted workflow, plus one real carrier sandbox integration. <b>Reasoning:</b> those three changes convert the honest local caveats into production-relevant evidence. <b>Instance:</b> the escrow and receiver need no redesign; only addresses, configuration and the removal of the bridge.</p></div></div>
+
+<h1 class="module"><span class="mtag">MODULE 15</span>OWNERSHIP, RESUME AND DEFENCE</h1>
+
+<p>The goal of this module is not to make the project sound bigger. It is to make your explanation precise enough that an interviewer believes you built it, because precision is the signature of authorship.</p>
+
+<h2>15.1 Resume entry</h2>
+
+<div class="box">
+  <span class="lbl">Accurate 3–4 bullet description</span>
+  <ul>
+    <li>Built ProofPay, an escrow-based payment-protection DApp: a Solidity ERC-20 (pUSD), a custody escrow with two terminal settlement paths, and a report-authorising receiver contract deployed on a local Hardhat network (chain ID 31337).</li>
+    <li>Implemented a Chainlink CRE (TypeScript) workflow that fetches shipment data over HTTP, verifies escrow state over EVM, applies a six-state settlement policy, and emits ABI-encoded reports with full provenance.</li>
+    <li>Engineered a local execution bridge that relays CRE's exact report bytes to the receiver, with preflight validation, order allowlisting, idempotent state tracking and receipt verification — settling both release and refund paths on chain.</li>
+    <li>Delivered a React/TypeScript frontend with MetaMask (EIP-1193), buyer/seller/admin dashboards and an Express shipment API; validated with 31 contract tests, 17 backend tests and a clean production build.</li>
+  </ul>
+</div>
+
+<h2>15.2 The 30-second introduction</h2>
+
+<p>"ProofPay is a blockchain payment-protection system for high-value online purchases. The buyer locks pUSD in a smart-contract escrow, a Chainlink CRE workflow reads the courier's shipment record and the escrow state, decides whether the delivery condition is met, and produces a signed-off report; a receiver contract enforces authorisation and replay protection and tells the escrow to pay the seller or refund the buyer. I built the three contracts, the CRE workflow, the local relay and the React front end, and verified both settlement paths on a local Hardhat chain."</p>
+
+<h2>15.3 The two-minute version</h2>
+
+<p>Structure it as problem, design, evidence, limitation. Problem: in high-value e-commerce, whoever acts first carries the risk, and existing protections replace that risk with an institution you cannot audit. Design: custody moves into a contract with no withdrawal path; the delivery fact comes from an off-chain API read by CRE rather than asserted by an administrator; the report carries order, outcome, tracking hash and timestamp; the receiver accepts it only from an authorised caller, only once, and only while the order is funded. Evidence: 31 contract tests and 17 API tests pass, and three settlements executed with receipts at blocks 24, 29 and 30 — a release, a refund and a second release, each moving exactly 100 pUSD and each advancing the chain by one block. Limitation: the workflow runs in the official CRE simulator with dry-run enabled and a local bridge relays the report, so this is real workflow execution, not DON consensus; and the courier is simulated.</p>
+
+<h2>15.4 The five-minute architecture answer</h2>
+
+<p>Walk the four layers and name one artefact per layer. Presentation: React reads chain state through MetaMask; the checkout sequences approve then createEscrow, waiting for each receipt. Contracts: the token, the escrow (Funded, Released, Refunded, oracle-only settlement), and the receiver (authorise, decode, de-duplicate, route). Oracle: CRE fetches the API, reads <span class="mono">getEscrow</span> at a finalised block, applies <span class="mono">shouldSettle</span>, encodes a four-field report, and logs structured records. Relay: the bridge validates those records, re-derives the report ID, checks the allowlist and funding, submits <span class="mono">processReport</span> from an unlocked account, and records the receipt. Then say what each layer cannot do — that is what makes the answer senior rather than descriptive.</p>
+
+<h2>15.5 Defending each component</h2>
+
+<table class="tbl">
+  <caption>Table 15.1: The one-sentence defence for every component</caption>
+  <thead><tr><th style="width:22%">Component</th><th style="width:78%">What you say</th></tr></thead>
+  <tbody>
+    <tr><td>pUSD</td><td>"A 16-line ERC-20 so the protected amount is an exact integer separate from gas; mint is owner-only, and there is no burn or pause that could destroy or freeze escrowed value."</td></tr>
+    <tr><td>Escrow</td><td>"Custody with exactly two exits, both oracle-only, both requiring Funded and flipping to a terminal state before transferring."</td></tr>
+    <tr><td>Receiver</td><td>"A policy boundary: it authorises the caller, decodes the report, blocks replay and duplicates, and routes two outcomes to two functions."</td></tr>
+    <tr><td>CRE workflow</td><td>"The only decision-maker: it fetches the courier record, verifies the escrow, applies the six-state policy, and encodes the report with provenance."</td></tr>
+    <tr><td>Bridge</td><td>"A relay with no policy: it validates, allowlists, submits CRE's bytes unchanged, and records the receipt; it cannot choose a payee."</td></tr>
+    <tr><td>Shipment API</td><td>"The off-chain system of record with strict transitions and a chain check at registration, so the oracle always reads a fact that corresponds to funded money."</td></tr>
+    <tr><td>Scheduler</td><td>"A courier-fact generator for demos; it advances statuses and triggers the pipeline but never settles anything."</td></tr>
+    <tr><td>Frontend</td><td>"A view over chain state: it discovers orders from logs, re-reads each escrow from storage, and sequences transactions only after receipts."</td></tr>
+    <tr><td>Tests</td><td>"31 contract tests including duplicate settlement and reentrancy, plus 17 API tests; the negative cases are the ones that matter."</td></tr>
+  </tbody>
+</table>
+
+<h2>15.6 Explaining your contribution honestly</h2>
+
+<p>You used AI coding agents on this repository. That is normal in 2026 and it is not a weakness, but the way you describe it determines whether it sounds like authorship or delegation. Say what you decided, not what you typed: "I chose to keep the decision in CRE and make the bridge policy-free, which is why the bridge has no copy of <span class="mono">shouldSettle</span>. I rejected putting settlement directly on the escrow because it would have put ABI decoding and replay logic into the contract that holds the money." Then demonstrate understanding of a detail only an author would know — the dry-run/report ordering fix, the 109-byte header, the allowlist run where two reports produced one transaction.</p>
+
+<div class="box warn">
+  <span class="lbl">Three sentences never to say</span>
+  <p>"It is deployed on Chainlink's decentralised network." "It is production-ready and audited." "The courier integration works with real carriers." Each is false, and each invites a question that ends the interview badly. The accurate versions are stronger because they show judgement.</p>
+</div>

@@ -1,0 +1,333 @@
+<section class="cover">
+  <div class="kicker">LEARNING TEXTBOOK &middot; TECHNICAL MASTERY</div>
+  <div class="rule"></div>
+  <h1>PROOFPAY<br/>MASTER GUIDE</h1>
+  <div class="sub">From zero blockchain knowledge to defending every design decision in a viva or placement interview</div>
+  <div class="rule"></div>
+  <table class="meta">
+    <tr><td>What this book is</td><td>A teaching text for the ProofPay project: blockchain escrow, an ERC-20 payment token, a Chainlink CRE workflow, a local execution bridge, a React front end, an Express shipment service and a Hardhat test suite.</td></tr>
+    <tr><td>Who it is for</td><td>A student who can program in JavaScript/TypeScript, has used AI coding agents on this repository, and has little formal blockchain background.</td></tr>
+    <tr><td>How to study it</td><td>Read Modules 1&ndash;3 in order. Then read Module 10 (the end-to-end walkthrough) before Modules 4&ndash;9, so that each technical module has a place to attach to. Finish with Modules 14&ndash;17 for interview drilling.</td></tr>
+    <tr><td>Verified against</td><td>Solidity 0.8.28 &middot; Hardhat 2.29.1 &middot; ethers 6.17.0 &middot; OpenZeppelin 5.6.1 &middot; React 19.3.1 &middot; TypeScript 5.7.2 &middot; Vite 8.3.5 &middot; Tailwind 4.3.3 &middot; viem 2.57.14 &middot; Express 4.21.2 &middot; @chainlink/cre-sdk 1.23.0 &middot; CRE CLI 1.39.0 &middot; Hardhat chain ID 31337</td></tr>
+    <tr><td>Companion document</td><td><i>I_QUIT_BLOCKCHAIN.pdf</i> &mdash; the formal academic report. This guide is separate and is not a report; it teaches.</td></tr>
+  </table>
+  <div class="foot">Every code excerpt in this book is taken from the ProofPay repository. Where a feature is incomplete or simulated, the text says so explicitly.</div>
+</section>
+
+<div class="toc-page">
+  <h1 class="front">CONTENTS</h1>
+  <!--TOC-->
+</div>
+
+<h1 class="front">HOW TO USE THIS BOOK</h1>
+
+<p>This book has one job: after reading it, you should be able to open a blank page and explain ProofPay from the payment button to the settlement transaction, justify each design choice, name the alternatives you rejected, and admit the system's limits without being caught out. That is a different goal from writing a report. A report proves work was done; a textbook builds understanding.</p>
+
+<p>Three habits make the material stick. First, read with the repository open. Every module names real files, and reading the actual source for two minutes after each section is worth more than re-reading the prose. Second, after each module, close the book and explain the module's main idea out loud in sixty seconds. If you cannot, you have read words rather than learned a mechanism. Third, do Module 16's exercises honestly before looking at the answer section; the exercises are designed to expose exactly the gaps that interviewers find.</p>
+
+<h2>The learning path</h2>
+
+<p>The modules are ordered so that each one only depends on what came before. Modules 1 and 2 build the world: how the web talks, what a blockchain is, what a transaction does, and what MetaMask actually does when it pops up a window. Module 3 is the heart of the project: Solidity, ERC-20, and the three contracts read line by line. Module 4 explains the tool that compiles, deploys and tests everything. Module 5 covers the browser application; Module 6 covers the off-chain shipment service. Module 7 is Chainlink and the oracle problem, the intellectual centre of the project. Module 8 explains the part that is unique to this codebase, the local execution bridge, and why it exists. Module 9 covers the courier scheduler that makes the demonstration self-driving. Module 10 then replays the entire system as one continuous story, which is the version you will actually tell in an interview. Modules 11 and 12 turn the design into arguments and the failures into a troubleshooting manual. Module 13 is a file-by-file reference. Module 14 is 125 interview questions with full answers. Module 15 teaches you to describe the work on a resume and defend it. Module 16 is practice. Module 17 is a glossary of every term the project uses.</p>
+
+<div class="box why">
+  <span class="lbl">The honesty rule</span>
+  <p>Throughout this book, "implemented" means the code exists in this repository and was executed. "Simulated" means the mechanism is real but the data source is fake: the courier is a script, not DHL. "Not implemented" means exactly that. You will be asked about these distinctions, and the correct answer is always the precise one. Claiming a deployed Chainlink DON would be both false and easy to disprove, because the CRE configuration in this project has <span class="mono">dryRun: true</span> and the installed SDK has no selector for a local Hardhat chain.</p>
+</div>
+
+<h1 class="module"><span class="mtag">MODULE 1</span>UNDERSTANDING THE INTERNET AND BLOCKCHAIN FROM ZERO</h1>
+
+<p>You cannot understand escrow until you understand what it means for a program to hold money, and you cannot understand that until you understand where programs live and who can change their data. This module builds those foundations in the order a newcomer needs them: the web first, then the ledger, then the transaction, then the machine that runs contracts, then the cryptography that makes any of it trustworthy.</p>
+
+<h2>1.1 How the internet works, and where ProofPay sits in it</h2>
+
+<p>Almost every interaction in ProofPay is one of two shapes: a request to a server, or a transaction to a blockchain. Both are messages; the difference is who is allowed to change the record afterwards.</p>
+
+<p>A <b>client</b> is a program that asks for something: your browser, or inside it, the React application. A <b>server</b> is a program that answers: here, the Express service on port 5001, or the Hardhat node on port 8545. Between them travel <b>requests</b> and <b>responses</b>. In the browser-to-backend case the protocol is HTTP; in the browser-to-blockchain case it is JSON-RPC, which is HTTP with a fixed message format for chain operations.</p>
+
+<p><b>Frontend</b> means the code running inside your browser tab: React components, TypeScript, CSS, and an injected wallet provider. <b>Backend</b> means code running in a separate process that the browser cannot inspect or edit: the shipment API with its JSON file. The split matters because a frontend is under the user's control. Anything the frontend decides can be changed by a determined user with developer tools. That is exactly why ProofPay's rule, "the buyer's funds may only move when the delivery condition is satisfied", is enforced in Solidity and not in React.</p>
+
+<p>An <b>API</b> (application programming interface) is an agreed set of addresses and message shapes for talking to a program. ProofPay's shipment API, for example, defines five endpoints. A <b>database</b> is durable storage. Big systems use PostgreSQL or MongoDB; this project deliberately uses a single JSON file at <span class="mono">backend/data/shipments.json</span>, written atomically, because the teaching goal is the oracle pipeline rather than database engineering.</p>
+
+<p><b>JSON</b> (JavaScript Object Notation) is the text format both sides agree on. A real shipment record from this project looks like this:</p>
+
+<pre class="code">{
+  "trackingId": "PPD-DEMO-DELIVERED",
+  "orderId": "0xf694b593b682ac612e6f5c784a6801deab4f4c0b7420272b555d8ce669c26434",
+  "carrier": "ProofPay Auto Courier",
+  "sellerAddress": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+  "status": "DELIVERED",
+  "simulated": true,
+  "events": [ { "status": "CREATED", "timestamp": "2026-11-02T00:54:12.201Z",
+                "description": "Shipment registered with ProofPay Auto Courier (simulated courier data)." } ]
+}</pre>
+
+<p><b>Authentication</b> answers "who is allowed to do this?". ProofPay uses three different answers in three places, and confusing them is a classic interview mistake. The shipment API uses a shared secret header on mutating routes (<span class="mono">requireMutationAccess</span>), because only the seller client and the demo scheduler should write. The blockchain uses cryptographic signatures: a transaction is only valid if it is signed by the private key behind the sending address. MetaMask is where that signature happens. And the contracts use role checks (<span class="mono">onlyOwner</span>, <span class="mono">onlyOracle</span>, <span class="mono">onlyAuthorized</span>), which are authorisation rules layered on top of the signature.</p>
+
+<table class="tbl">
+  <caption>Table 1.1: What happens when a buyer opens the Buyer Dashboard</caption>
+  <thead><tr><th style="width:8%">Step</th><th style="width:30%">Who acts</th><th style="width:62%">What actually happens</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Browser</td><td>Vite's dev server at <span class="mono">http://localhost:5173</span> returns <span class="mono">index.html</span>, the bundled JavaScript and CSS. React mounts the app and React Router selects the buyer route.</td></tr>
+    <tr><td>2</td><td>React + MetaMask</td><td><span class="mono">useWallet</span> silently calls <span class="mono">eth_accounts</span> (no popup) to see whether the site is already authorised, then <span class="mono">eth_chainId</span> and <span class="mono">eth_getBalance</span> to fill the header.</td></tr>
+    <tr><td>3</td><td>React + RPC</td><td><span class="mono">useEscrows</span> calls <span class="mono">eth_getLogs</span> filtered on the escrow address and the <span class="mono">EscrowCreated</span> topic to discover order IDs that exist.</td></tr>
+    <tr><td>4</td><td>React + RPC</td><td>For each discovered ID it calls <span class="mono">getEscrow(orderId)</span> with <span class="mono">eth_call</span> and decodes the returned struct: buyer, seller, amount, timestamps, status.</td></tr>
+    <tr><td>5</td><td>React</td><td>Filters to escrows where the buyer equals the connected address, formats amounts from 18-decimal integers, and renders cards and an activity feed.</td></tr>
+    <tr><td>6</td><td>React (optional)</td><td>For the tracking panel it calls the Express API, e.g. <span class="mono">GET http://localhost:5001/api/shipments/order/&lt;orderId&gt;</span>, which returns the JSON record shown above.</td></tr>
+  </tbody>
+</table>
+
+<p>Notice what is <i>absent</i> from that list: no server tells the browser what the buyer owns. The browser asks the chain. That single decision — the contract is the source of truth, the backend is only a courier record — is the backbone of the whole architecture, and it is the answer to "how do you know the dashboard is showing real data?".</p>
+
+<h2>1.2 What a blockchain is, and why it exists</h2>
+
+<p>Start with the problem rather than the definition. Suppose two strangers want to exchange money for goods over the internet. Somebody has to go first. If the buyer pays first, the seller may vanish. If the seller ships first, the buyer may never pay. The usual answer is an institution in the middle: a bank, a marketplace, an escrow agent. That works, but it means the rule that decides who wins a dispute lives in a private database, applied by staff, visible to nobody.</p>
+
+<p>A blockchain is a <b>distributed ledger</b>: a database replicated across many independent computers (<b>nodes</b>), where every change is a signed transaction, changes are grouped into <b>blocks</b>, and blocks are chained together by cryptographic hashes so that altering an old block invalidates every block after it. Because many nodes hold copies and compare them, there is no single machine whose edit becomes truth. The interesting part is not "many copies"; it is that the copies agree on rules for what counts as a valid change, and that agreement (<b>consensus</b>) is what lets strangers rely on the record without trusting each other.</p>
+
+<table class="tbl">
+  <caption>Table 1.2: Traditional database versus blockchain, with ProofPay examples</caption>
+  <thead><tr><th style="width:20%">Concept</th><th style="width:34%">Traditional database</th><th style="width:46%">Blockchain, in ProofPay</th></tr></thead>
+  <tbody>
+    <tr><td>Who writes</td><td>Any application with credentials; the operator can edit any row.</td><td>Only a signed transaction can change state. No account, not even the owner, can rewrite an escrow's history.</td></tr>
+    <tr><td>Authority</td><td>The operator decides what the rules mean.</td><td>The deployed bytecode decides. <span class="mono">confirmDelivery</span> either satisfies its checks or reverts.</td></tr>
+    <tr><td>History</td><td>Audit logs are optional and mutable.</td><td>Every settlement emits events permanently; the receipt, block number and logs are the audit trail.</td></tr>
+    <tr><td>Failure</td><td>Restore a backup; the operator's judgement applies.</td><td>Transactions are atomic: they either fully apply or leave no state change.</td></tr>
+    <tr><td>Cost</td><td>Cheap writes, fast.</td><td>Every write costs gas, which is why ProofPay stores only what matters on chain.</td></tr>
+    <tr><td>Privacy</td><td>Data is private by default.</td><td>Everything on chain is public, which is why the report stores <span class="mono">keccak256(trackingId)</span> rather than the tracking number.</td></tr>
+  </tbody>
+</table>
+
+<p><b>Hashing</b> is the glue. A hash function takes any input and returns a fixed-length fingerprint: change one character and the fingerprint changes completely, but the same input always gives the same fingerprint. ProofPay uses <b>Keccak-256</b>, which returns 32 bytes. You will meet it in three places: block linkage (not your code), order IDs (32 random bytes, treated as an identifier), and report IDs (<span class="mono">keccak256</span> of the order, outcome, tracking hash, timestamp and metadata). The report ID is what makes replay detectable: the same report hashes to the same 32 bytes, so the receiver can recognise it.</p>
+
+<p><b>Digital signatures</b> are the other half. A private key signs; anyone holding the matching public key can verify the signature but cannot produce a new one. An Ethereum <b>address</b> is derived from the public key, so "verify the signature, recover the signer's address, compare it with the sender field" is enough to prove who authorised a transaction. This is why nobody can move your pUSD by editing a request in the browser: without your key, there is no valid signature, and the node rejects the transaction before any contract runs.</p>
+
+<div class="box analogy">
+  <span class="lbl">Analogy, then the reality</span>
+  <p>Think of a blockchain as a shared notebook kept by a hundred people, where each page's first line is a fingerprint of the previous page. Tearing out a page changes every later fingerprint, so the forgery is visible to everyone holding a copy.</p>
+  <p>Technically: each block header commits to its parent's hash, so rewriting history requires redoing all subsequent proof-of-work or consensus participation, on the majority of the network, faster than honest nodes extend the chain. On the local Hardhat chain, this security property is <i>absent by design</i> — one machine mines instantly and you can restart it and erase everything. That is why this project never claims mainnet security.</p>
+</div>
+
+<p><b>Immutability</b>, therefore, is not magic: it is the cost of rewriting history. <b>Transparency</b> is the consequence of replication: every participant can read every transaction. <b>Decentralisation</b> is the degree to which no single party can unilaterally decide what happens next. ProofPay gets strong immutability and transparency from the chain, but its oracle path is only partially decentralised, and the honest answer to "is this decentralised?" is discussed in Module 11 and rehearsed in Module 14.</p>
+
+<h2>1.3 How a blockchain transaction works</h2>
+
+<p>Here is the full path of one ProofPay action — a buyer funding a 3,499 pUSD escrow. Read it once as a story, then again as a checklist, because interviewers ask you to narrate exactly this.</p>
+
+<ol>
+  <li><b>The user initiates an action.</b> The buyer clicks "Fund escrow". React has already validated the form and knows the amount, the seller address and a freshly generated 32-byte order ID.</li>
+  <li><b>The wallet prepares a transaction.</b> The app calls <span class="mono">eth_sendTransaction</span> through the injected provider. MetaMask builds an unsigned transaction: from, to (the escrow contract), value (0, because pUSD is an ERC-20 not ETH), data (the encoded <span class="mono">createEscrow</span> call), gas parameters and the next nonce.</li>
+  <li><b>The transaction is signed.</b> MetaMask shows the details and asks for confirmation. On approval it signs the transaction hash with the buyer's private key. The key never leaves the extension.</li>
+  <li><b>The transaction is broadcast.</b> The signed bytes go to the RPC endpoint — here <span class="mono">http://127.0.0.1:8545</span>, the Hardhat node.</li>
+  <li><b>A node validates it.</b> The node checks the signature, the nonce, the balance for gas, the chain ID and the intrinsic gas; malformed or unauthorised transactions never reach a contract.</li>
+  <li><b>It is included in a block.</b> Hardhat mines it immediately. On a public chain this is where validators or miners compete; here it is deterministic.</li>
+  <li><b>The contract executes.</b> The EVM runs <span class="mono">createEscrow</span>: validations, struct write, then <span class="mono">paymentToken.safeTransferFrom(buyer, escrow, 3,499e18)</span>, which calls the token contract, which checks the allowance and moves the balance.</li>
+  <li><b>State changes.</b> The escrow's storage now holds a <span class="mono">Funded</span> record; the token's balances are updated; events are queued.</li>
+  <li><b>A receipt is returned.</b> The app polls <span class="mono">eth_getTransactionReceipt</span>, sees <span class="mono">status: 1</span>, reads the logs, and refreshes the dashboard.</li>
+</ol>
+
+<table class="tbl">
+  <caption>Table 1.3: The vocabulary of a transaction, with real values from this project</caption>
+  <thead><tr><th style="width:17%">Term</th><th style="width:38%">Meaning</th><th style="width:45%">Where you meet it in ProofPay</th></tr></thead>
+  <tbody>
+    <tr><td>Transaction hash</td><td>Keccak-256 of the signed transaction; its unique ID.</td><td><span class="mono">0x74d678211c74efda145b9c712adae35bcd5a35616275ec8d76d0dcc3a232f4a6</span> was the release settlement at block 30.</td></tr>
+    <tr><td>Block number</td><td>Position of the block in the chain.</td><td>Settlement at block 24 (release), 29 (refund), 30 (release). Each was exactly one block higher than the previous.</td></tr>
+    <tr><td>Gas</td><td>Unit of computational work; you pay gas &times; gas price.</td><td><span class="mono">createEscrow</span> consumed 156,144 gas after the first; <span class="mono">processReport</span> about 122,470.</td></tr>
+    <tr><td>Gas limit</td><td>Maximum gas you allow; unused gas is refunded.</td><td>Hardhat's <span class="mono">localhost</span> network sets a 16,000,000 block gas limit; the CRE write path configures <span class="mono">gasLimit: "1000000"</span>.</td></tr>
+    <tr><td>Gas price</td><td>Price per gas unit; irrelevant in value terms on a local chain.</td><td>Hardhat defaults; the demonstration never optimises it, and the report says so rather than quoting a mainnet figure.</td></tr>
+    <tr><td>Nonce</td><td>Per-account counter that orders that account's transactions and blocks replays.</td><td>A stuck nonce is the classic "transaction pending forever" cause; see Module 12.</td></tr>
+    <tr><td>Chain ID</td><td>Identifier of the network, signed into the transaction to prevent cross-chain replay.</td><td>31337 for Hardhat Local; the UI refuses writes unless <span class="mono">isCorrectNetwork</span> is true. Sepolia would be 11155111, mainnet 1.</td></tr>
+    <tr><td>RPC</td><td>Remote procedure call: the JSON-over-HTTP interface to a node.</td><td><span class="mono">http://127.0.0.1:8545</span> for the node; viem's <span class="mono">http()</span> transport in the CRE workflow and the bridge.</td></tr>
+    <tr><td>EVM</td><td>Ethereum Virtual Machine: the deterministic computer that executes bytecode.</td><td>Every contract call is EVM execution; "EVM capability" in CRE means "read from that machine".</td></tr>
+    <tr><td>Account</td><td>An address with a balance and, for contracts, code and storage.</td><td>Twenty funded accounts exist on the Hardhat node; three roles matter: admin, buyer, seller.</td></tr>
+    <tr><td>Address</td><td>20 bytes; derived from a public key (EOA) or from deployer+nonce (contract).</td><td><span class="mono">0x5FbD…0aa3</span> pUSD, <span class="mono">0xe7f1…0512</span> escrow, <span class="mono">0xB7f8…4F5e</span> receiver.</td></tr>
+    <tr><td>Private key</td><td>256-bit secret that signs transactions. Whoever holds it controls the account.</td><td>Never appears in the repository. Hardhat's accounts are unlocked, which is why the bridge can use <span class="mono">eth_sendTransaction</span> without a key.</td></tr>
+    <tr><td>Public key</td><td>Derived from the private key; used to verify signatures and to derive the address.</td><td>You never handle it directly in this project; the wallet does.</td></tr>
+  </tbody>
+</table>
+
+<h3>What happens when a transaction fails</h3>
+
+<p>Failure comes in three flavours, and telling them apart is an interview skill in itself. <b>Rejected in the wallet</b>: the user pressed cancel, so nothing was broadcast, no gas was spent, and the app should say "you rejected the request" rather than "transaction failed". <b>Reverted during execution</b>: the transaction was mined, gas was consumed, but the contract threw. In Solidity 0.8 a revert rolls back all state changes, which is why a failed settlement leaves the escrow untouched. The receipt shows <span class="mono">status: 0</span>, and modern tooling can decode the revert reason — ProofPay uses custom errors such as <span class="mono">EscrowNotFunded(orderId)</span> so the reason is precise and cheap. <b>Never mined</b>: the transaction sits in the mempool because the gas price is too low or a nonce gap exists; here it appears as "pending forever".</p>
+
+<div class="box warn">
+  <span class="lbl">Common misconception</span>
+  <p>"A reverted transaction still transfers the tokens because the transfer happened before the revert." False. Reverts are atomic: the EVM discards every state change made by the whole call, including nested calls into the token contract. The only thing permanently consumed is gas, which is why a reverted settlement costs the sender fees but moves no pUSD.</p>
+</div>
+
+<h2>1.4 Ethereum and the EVM</h2>
+
+<p>Ethereum is a network whose state is a key-value store maintained by thousands of nodes, plus a virtual machine that can modify that store according to code that users deploy. Solidity compiles to EVM bytecode; the bytecode is what actually runs. "EVM-compatible" networks (Polygon, Arbitrum, Base, BNB Chain, and your local Hardhat node) implement the same instruction set and RPC conventions, which is why the same contracts and the same frontend work on any of them — only the chain ID and addresses change.</p>
+
+<p>There are two kinds of account, and ProofPay depends on both. An <b>externally owned account (EOA)</b> is controlled by a private key: the buyer, the seller, the admin. A <b>contract account</b> has code and storage and no key: the token, the escrow, the receiver. An EOA initiates transactions. A contract can only act when called, either by an EOA or by another contract — which is exactly how the receiver becomes the escrow's oracle: the admin calls the receiver, and the receiver calls <span class="mono">confirmDelivery</span>, so the escrow sees <span class="mono">msg.sender = receiver</span>, not the admin.</p>
+
+<table class="tbl">
+  <caption>Table 1.4: EVM data locations, and why they matter here</caption>
+  <thead><tr><th style="width:15%">Location</th><th style="width:35%">Lifetime and cost</th><th style="width:50%">ProofPay relevance</th></tr></thead>
+  <tbody>
+    <tr><td>Storage</td><td>Permanent, on chain, expensive (roughly 20,000 gas for a fresh slot).</td><td><span class="mono">_escrows</span>, <span class="mono">processedReports</span>, <span class="mono">orderSettled</span>, token balances and allowances. This is why <span class="mono">createEscrow</span> costs ~156k gas and why the escrow never stores the tracking ID itself.</td></tr>
+    <tr><td>Memory</td><td>Per-call, expandable, cheap, discarded at the end.</td><td>The decoded <span class="mono">Escrow memory</span> returned by <span class="mono">getEscrow</span>; string decoding inside the receiver.</td></tr>
+    <tr><td>Calldata</td><td>Read-only input of an external call; cheapest for large bytes.</td><td><span class="mono">processReport(bytes metadata, bytes report)</span> takes the 256-byte report as calldata, which is why the bridge's transaction is 388 bytes of call data.</td></tr>
+    <tr><td>Logs / events</td><td>Written once, not readable by contracts, cheap-ish, permanent.</td><td><span class="mono">EscrowCreated</span> is how the frontend discovers orders; <span class="mono">ReportProcessed</span> is the audit record of a settlement.</td></tr>
+  </tbody>
+</table>
+
+<p>Events deserve one more sentence because beginners expect contracts to read them. They cannot. A log is a receipt for humans and indexers: it is stored in the transaction receipt, and only off-chain software (<span class="mono">eth_getLogs</span>, block explorers, your React app) consumes it. That is precisely why <span class="mono">useEscrows</span> uses logs to <i>discover</i> order IDs and then calls <span class="mono">getEscrow</span> to <i>read</i> the data: discovery is cheap and indexable; truth comes from storage.</p>
+
+<h2>1.5 Cryptographic foundations you will actually be asked about</h2>
+
+<p><b>Hashing.</b> Keccak-256 maps any bytes to 32 bytes, deterministically and irreversibly. Properties that matter: the same input always yields the same output (so a report ID can be recomputed by anyone); a one-bit change scrambles the whole output (so tampering is detectable); and you cannot feasibly find two inputs with the same output (so an attacker cannot substitute a different report for the same ID). In this project, hashing appears in the block chain itself, in order IDs, in <span class="mono">keccak256(toHex(trackingId))</span> inside the report, in report IDs, and in ABI function selectors.</p>
+
+<p><b>Signatures.</b> Ethereum uses ECDSA over secp256k1. A signature proves that the holder of a private key approved a specific 32-byte digest. The digest for a transaction covers the chain ID, nonce, gas, recipient, value and data, so a signature cannot be replayed on another chain or reused for a different call. When MetaMask shows you a scary-looking hex blob and asks you to confirm, that is the digest you are authorising.</p>
+
+<p><b>Address derivation.</b> Address = last 20 bytes of <span class="mono">keccak256(publicKey)</span> for an EOA. For a contract, the address is <span class="mono">keccak256(rlp(sender, nonce))[12:]</span> — which is why, on a fresh Hardhat node, deployments land at the familiar sequence <span class="mono">0x5FbD…</span>, <span class="mono">0xe7f1…</span> from the same account: same deployer, increasing nonce.</p>
+
+<p><b>Why contracts cannot trust arbitrary external information.</b> This is the seed of Module 7. A contract is deterministic: every node must compute the same result from the same inputs, or consensus breaks. If Solidity could perform an HTTP GET, two nodes could receive different responses (or none), and the chain would fork on the answer. Therefore external facts must be <i>pushed</i> into the chain by a transaction, and the only question that matters is who is allowed to push, and what evidence they attach. Everything in this project's oracle design — the receiver's authorisation, the report's provenance fields, the replay protection — exists because of that single constraint.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 1</span>
+  <p><b>Q.</b> "Why can't the escrow contract just call the courier's API when the parcel is delivered?" <b>Model answer.</b> Because execution must be deterministic and every node must agree on the same state transition; an HTTP call is non-deterministic and unavailable inside the EVM. So the fact has to arrive as part of a transaction, and something off chain must decide to send it. In ProofPay that something is a Chainlink CRE workflow, and the contract's protection is that it will only accept the report from an authorised caller, only once, and only while the order is still funded.</p>
+</div>
+
+<h1 class="module"><span class="mtag">MODULE 2</span>METAMASK, EXPLAINED COMPLETELY</h1>
+
+<p>MetaMask is where most beginners' understanding collapses into "the wallet thing". This module fixes that. By the end you should be able to explain what MetaMask stores, what it refuses to store, what it does when a site calls it, and why ProofPay needs two separate confirmations to fund one escrow.</p>
+
+<h2>2.1 What MetaMask actually is</h2>
+
+<p>MetaMask is a browser extension that (a) holds encrypted private keys, (b) signs transactions and messages on your behalf, and (c) injects a JavaScript object into every page at <span class="mono">window.ethereum</span> so that websites can request those signatures. It is also a lightweight wallet UI and a network switcher.</p>
+
+<p>What it stores: an encrypted vault containing your seed phrase and derived keys, your selected network and account, and a local transaction history. What it does <b>not</b> store: your cryptocurrency. The tokens and ETH are entries in the blockchain's state. If you delete the extension and reinstall it with the same seed phrase, your balance reappears instantly, because the balance never lived in the extension. This is the single most useful sentence for explaining wallets to a non-technical audience.</p>
+
+<p>An <b>address</b> is your public identifier: <span class="mono">0x7099…79C8</span>. Anyone can send to it; nobody can spend from it without the key. ProofPay displays addresses shortened for readability (<span class="mono">0x7099…79c8</span>) but always sends full 20-byte values to the chain, because a shortened address is not a valid address.</p>
+
+<h2>2.2 Private keys, seed phrases, importing versus connecting</h2>
+
+<p>A <b>seed phrase</b> (12 or 24 words) is the master secret. Every account in the wallet is derived from it by a deterministic process (BIP-39 for the mnemonic, BIP-32/BIP-44 for derivation paths). Importing an account means giving the wallet either the seed phrase or a raw private key so that it can control that account. Connecting a site means granting that site permission to <i>see your address and ask for signatures</i> — it never gives the site your key.</p>
+
+<table class="tbl">
+  <caption>Table 2.1: Connect versus import &mdash; a distinction interviewers test</caption>
+  <thead><tr><th style="width:16%">Action</th><th style="width:28%">What you hand over</th><th style="width:28%">What the site can then do</th><th style="width:28%">Risk</th></tr></thead>
+  <tbody>
+    <tr><td>Connect (ProofPay's "Connect wallet")</td><td>Nothing secret. The wallet reveals the selected address after you approve.</td><td>Read your address and balances; ask you to sign transactions or messages, each of which you must approve.</td><td>Low. Revocable from MetaMask's "Connected sites".</td></tr>
+    <tr><td>Import account</td><td>The seed phrase or a private key.</td><td>Everything: full control of the account.</td><td>Catastrophic if the site is malicious. Legitimate only inside the wallet's own UI.</td></tr>
+  </tbody>
+</table>
+
+<p>MetaMask asks for approval on every transaction because a signature is irreversible. There is no "undo" for a mined transaction and no customer-support number to call. The prompt is the last line of defence, which is why ProofPay's UI always shows the amount and the recipient before triggering it, and why the escrow contract independently re-validates everything: never rely on a UI to enforce a rule.</p>
+
+<div class="box warn">
+  <span class="lbl">Local accounts only</span>
+  <p>Hardhat prints twenty accounts with their private keys when you run <span class="mono">npx hardhat node</span>. Those keys are public, published in Hardhat's documentation, and identical every time. They exist only for local development. Never send real funds to them, never reuse them on a public network, and never paste them into a website. This guide deliberately contains no key material.</p>
+</div>
+
+<h2>2.3 Accounts, networks, chain IDs and our local configuration</h2>
+
+<p>One wallet can hold many accounts (different addresses derived from the same seed) and can point at many networks (different chains). The <b>chain ID</b> is the crucial field: it is included in the signed transaction, so a transaction signed for chain 31337 cannot be replayed on Ethereum mainnet. The RPC URL is where the wallet sends requests for the selected network.</p>
+
+<table class="tbl">
+  <caption>Table 2.2: ProofPay's local network, verified from hardhat.config.js and the running node</caption>
+  <thead><tr><th style="width:26%">Setting</th><th style="width:74%">Value in this project</th></tr></thead>
+  <tbody>
+    <tr><td>Network name in MetaMask</td><td>Hardhat Local (any label works; the chain ID is what matters)</td></tr>
+    <tr><td>RPC URL</td><td><span class="mono">http://127.0.0.1:8545</span></td></tr>
+    <tr><td>Chain ID</td><td><span class="mono">31337</span> (hex <span class="mono">0x7a69</span>)</td></tr>
+    <tr><td>Currency symbol</td><td>ETH (test ETH only; it pays gas, not purchases)</td></tr>
+    <tr><td>Backend</td><td><span class="mono">http://localhost:5001</span></td></tr>
+    <tr><td>Frontend</td><td><span class="mono">http://localhost:5173</span></td></tr>
+    <tr><td>Accounts (Hardhat defaults)</td><td>Admin/owner/manual oracle <span class="mono">0xf39F…2266</span>; buyer <span class="mono">0x7099…79C8</span>; seller <span class="mono">0x3C44…93BC</span></td></tr>
+    <tr><td>Why the network must match</td><td>Contracts live at fixed addresses on one chain. If MetaMask points at mainnet, the app would be reading a chain where <span class="mono">0xe7f1…0512</span> is either empty or an unrelated contract. ProofPay guards this by checking <span class="mono">chainId === 31337</span> before offering any write action.</td></tr>
+  </tbody>
+</table>
+
+<h2>2.4 How MetaMask talks to React: EIP-1193 in the actual code</h2>
+
+<p>EIP-1193 standardises the injected provider: a single object with a <span class="mono">request({ method, params })</span> method that returns a promise. ProofPay uses exactly six methods. Understanding what each one does, and when it pops up a window, is the difference between debugging in seconds and guessing for an hour.</p>
+
+<table class="tbl">
+  <caption>Table 2.3: The EIP-1193 methods ProofPay uses</caption>
+  <thead><tr><th style="width:27%">Method</th><th style="width:12%">Prompts?</th><th style="width:61%">Purpose and where it appears</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">eth_requestAccounts</span></td><td>Yes (first time)</td><td>Asks the user to connect. Used by <span class="mono">connect()</span> in <span class="mono">useWallet</span>; returns an array of addresses.</td></tr>
+    <tr><td><span class="mono">eth_accounts</span></td><td>No</td><td>Returns already-authorised accounts. Used on mount for silent rehydration, so a returning user is not asked again.</td></tr>
+    <tr><td><span class="mono">eth_chainId</span></td><td>No</td><td>Returns the current chain as a hex string. <span class="mono">parseChainId</span> converts it and the result drives <span class="mono">isCorrectNetwork</span>.</td></tr>
+    <tr><td><span class="mono">eth_getBalance</span></td><td>No</td><td>Reads native ETH for the header. Note this is gas money, not pUSD.</td></tr>
+    <tr><td><span class="mono">eth_call</span></td><td>No</td><td>Executes a contract function read-only. ProofPay uses it for <span class="mono">balanceOf</span>, <span class="mono">getEscrow</span>, <span class="mono">manualOracle</span>.</td></tr>
+    <tr><td><span class="mono">eth_sendTransaction</span></td><td>Yes</td><td>Requests a signature and broadcast. Used for approve, createEscrow, processReport and the manual settlements.</td></tr>
+    <tr><td><span class="mono">wallet_switchEthereumChain</span></td><td>Yes</td><td>Asks MetaMask to switch networks; if the chain is unknown it fails with code 4902 and the app then calls <span class="mono">wallet_addEthereumChain</span>.</td></tr>
+    <tr><td><span class="mono">accountsChanged</span> / <span class="mono">chainChanged</span></td><td>Events</td><td>Emitted when the user switches account or network. <span class="mono">useWallet</span> subscribes and re-reads state, which is why the dashboards follow the active account without a page reload.</td></tr>
+  </tbody>
+</table>
+
+<p>Here is the actual core of the project's wallet handling, shortened but not rewritten:</p>
+
+<div class="codefile">frontend/src/store/useWallet.ts &mdash; silent rehydration and event subscriptions</div>
+<pre class="code"><span class="c">// On mount: no popup. If the site is already authorised, adopt the account.</span>
+const rehydrate = async () =&gt; {
+  if (sessionStorage.getItem(MANUAL_DISCONNECT_KEY) === '1') return;
+  const accounts = await provider.request&lt;string[]&gt;({ method: 'eth_accounts' });
+  if (cancelled || accounts.length === 0) return;
+  await applyAddress(accounts[0]);
+};
+
+<span class="c">// Live updates: the wallet tells us, we never poll for account changes.</span>
+provider.on('accountsChanged', handleAccountsChanged);
+provider.on('chainChanged', handleChainChanged);</pre>
+
+<p><span class="mono">applyAddress</span> is the single place that turns an address into UI state: it reads the chain ID, reads the native balance, and sets <span class="mono">isCorrectNetwork</span> by comparing against <span class="mono">HARDHAT_LOCAL.chainId</span>. Everything else in the app — dashboards, checkout, oracle panel — consumes that one object. If you are asked "how does the UI know the wallet changed?", the answer is: it subscribes to the provider's events and re-runs <span class="mono">applyAddress</span>; there is no polling loop.</p>
+
+<h2>2.5 The real transaction lifecycle in ProofPay</h2>
+
+<p>Funding one escrow involves <b>two</b> transactions, and the reason is an ERC-20 design decision, not an accident. A contract cannot move tokens out of your wallet unless you have authorised it to. That authorisation is itself a state change on the token contract, so it needs its own transaction.</p>
+
+<table class="tbl">
+  <caption>Table 2.4: Two transactions, one purchase</caption>
+  <thead><tr><th style="width:6%">#</th><th style="width:25%">Transaction</th><th style="width:30%">Who executes what</th><th style="width:39%">What it means / what you see</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><span class="mono">approve(escrow, 3499e18)</span> on pUSD</td><td>Buyer → token contract. Storage: <span class="mono">allowance[buyer][escrow] = 3499e18</span>.</td><td>MetaMask shows a call to the token with a spending cap. After mining, the checkout shows "approved". No money has moved yet.</td></tr>
+    <tr><td>2</td><td><span class="mono">createEscrow(orderId, seller, 3499e18)</span> on escrow</td><td>Buyer → escrow, which calls <span class="mono">transferFrom(buyer, escrow, 3499e18)</span> on the token.</td><td>MetaMask shows a second confirmation. On success the allowance is consumed and the escrow holds 3,499 pUSD in the <span class="mono">Funded</span> state.</td></tr>
+  </tbody>
+</table>
+
+<p><b>Why not one transaction?</b> Because the token contract is the only thing that may debit your balance, and it will only do so for an address you have approved. Combining them would require the token to trust an arbitrary caller, which would let any contract drain any wallet. The allowance indirection is the security feature; the extra click is its cost. (EIP-2612 <span class="mono">permit</span> and EIP-3009 <span class="mono">transferWithAuthorization</span> allow signature-based single-transaction flows for tokens that implement them; pUSD, built on OpenZeppelin's plain ERC-20, does not.)</p>
+
+<p><b>Signing a message versus signing a transaction.</b> A message signature (EIP-191/712) proves you control an address at a point in time; it changes no state and costs no gas. A transaction signature authorises a state change, is broadcast, costs gas and produces a receipt. ProofPay's flows are all transactions; the only message-ish interaction is the wallet connection itself.</p>
+
+<table class="tbl">
+  <caption>Table 2.5: Four things beginners conflate</caption>
+  <thead><tr><th style="width:22%">Action</th><th style="width:33%">What changes</th><th style="width:45%">How you verify it</th></tr></thead>
+  <tbody>
+    <tr><td>Wallet connection</td><td>Nothing on chain. A permission exists inside the extension.</td><td>The address appears in the header; no transaction hash exists.</td></tr>
+    <tr><td>Token approval</td><td>Token contract's allowance mapping.</td><td><span class="mono">allowance(owner, spender)</span>; a receipt from the token address; an <span class="mono">Approval</span> event.</td></tr>
+    <tr><td>Token transfer</td><td>Balances of two accounts.</td><td><span class="mono">balanceOf</span>; a <span class="mono">Transfer</span> event.</td></tr>
+    <tr><td>Contract interaction</td><td>Whatever the contract's code writes.</td><td>Contract-specific events (<span class="mono">EscrowCreated</span>, <span class="mono">ReportProcessed</span>) plus a changed <span class="mono">getEscrow</span> result.</td></tr>
+  </tbody>
+</table>
+
+<h2>2.6 Practical MetaMask walkthrough for this project</h2>
+
+<p>Do this once, slowly, with the three terminals running. You will understand more from ten minutes of this than from an hour of reading.</p>
+
+<ol>
+  <li><b>Start the chain.</b> <span class="mono">cd ~/Desktop/Minor_2/contracts &amp;&amp; npx hardhat node</span>. Leave it running. Note the twenty printed accounts — those are your local identities.</li>
+  <li><b>Deploy.</b> In a second terminal, from <span class="mono">contracts</span>, run the project's deploy scripts (<span class="mono">deploy.js</span>, then <span class="mono">deploy-receiver.js</span>, then <span class="mono">authorize-receiver.js</span>). This writes <span class="mono">contracts/deployments/cre-receiver-localhost.json</span>, which is your record of what is deployed where.</li>
+  <li><b>Install MetaMask</b> and create a wallet. Write the seed phrase on paper. It controls only test accounts in this workflow.</li>
+  <li><b>Add the network.</b> Networks → Add network → Add manually. RPC <span class="mono">http://127.0.0.1:8545</span>, chain ID <span class="mono">31337</span>, symbol ETH. Save and switch to it.</li>
+  <li><b>Import the three roles.</b> Account menu → Import account → paste the private key that Hardhat printed for account 0 (admin), then repeat for account 1 (buyer) and account 2 (seller). Importing is legitimate here because these keys are public test keys; you are teaching yourself role switching.</li>
+  <li><b>Connect.</b> Open <span class="mono">http://localhost:5173</span>, click Connect wallet, choose an account. The header should show "Hardhat Local" and a pUSD balance. If it shows a red network warning, you are on the wrong chain.</li>
+  <li><b>Import the token</b> so MetaMask can display it: Import tokens → custom address <span class="mono">0x5FbDB2315678afecb367f032d93F642f64180aa3</span>, symbol pUSD, decimals 18.</li>
+  <li><b>Act as buyer.</b> Go to Checkout, choose a product, confirm the seller address, submit. Approve the first prompt (allowance), then the second (escrow). Watch the checkout move through "approving" → "approved" → "creating" → confirmed.</li>
+  <li><b>Copy the transaction hashes</b> from the UI. Paste one into a terminal: <span class="mono">cast receipt &lt;hash&gt; --rpc-url http://127.0.0.1:8545</span> if you have Foundry, or read it via the project's viem/ethers scripts. Confirm <span class="mono">status 1</span> and note the block number.</li>
+  <li><b>Act as seller.</b> Switch account, open Incoming Escrows, select the funded order, register a shipment with a tracking ID beginning <span class="mono">PPD-</span>. This writes to the Express API, not the chain.</li>
+  <li><b>Act as admin.</b> Switch account, open the admin dashboard, confirm that <span class="mono">escrow.oracle()</span> equals the receiver and that <span class="mono">manualOracle()</span> equals this account. That panel is your proof the wiring is correct.</li>
+</ol>
+
+<div class="box warn">
+  <span class="lbl">If something looks wrong</span>
+  <p>A zero pUSD balance usually means the token is not imported or the admin never minted to that account. A missing "Fund escrow" button usually means the wrong network. A revert on <span class="mono">createEscrow</span> with <span class="mono">ERC20InsufficientAllowance</span> means the first transaction was replaced or never confirmed. Module 12 turns each of these into a diagnosis procedure.</p>
+</div>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 2</span>
+  <p><b>Q.</b> "If MetaMask doesn't store coins, what happens if I uninstall it?" <b>A.</b> The coins are entries in the blockchain; they remain untouched. Reinstalling and restoring the seed phrase recreates the keys and therefore access. What you lose by discarding the seed phrase is the ability to sign, not the asset.</p>
+  <p><b>Q.</b> "Why does ProofPay ask for two confirmations?" <b>A.</b> ERC-20 separates permission (allowance) from movement (transferFrom). The first transaction grants the escrow a spending cap; the second spends it. That indirection is what stops arbitrary contracts from draining wallets.</p>
+</div>

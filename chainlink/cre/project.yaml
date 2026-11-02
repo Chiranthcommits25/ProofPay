@@ -1,0 +1,13 @@
+version: 1.0
+name: proofpay-shipment-settlement
+
+staging-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: http://127.0.0.1:8545
+    - chain-name: anvil-devnet
+      url: http://127.0.0.1:8545
+
+workflows:
+  - name: proofpay-shipment-settlement
+    path: ./shipment-workflow

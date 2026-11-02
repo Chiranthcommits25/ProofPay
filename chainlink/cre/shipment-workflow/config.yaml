@@ -1,0 +1,8 @@
+shipmentApiBaseUrl: "http://localhost:5001"
+shipmentApiPath: "/api/shipments"
+rpcUrl: "http://127.0.0.1:8545"
+chainId: 31337
+escrowContractAddress: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+receiverContractAddress: "0x0000000000000000000000000000000000000000"
+forwarderAddress: "0x0000000000000000000000000000000000000000"
+dryRun: false

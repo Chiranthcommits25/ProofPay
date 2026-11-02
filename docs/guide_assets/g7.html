@@ -1,0 +1,156 @@
+<h1 class="module"><span class="mtag">MODULE 13</span>YOUR PROJECT, FILE BY FILE</h1>
+
+<p>This module is the map. For each important file: what it is for, how it is structured, which functions matter, what it talks to, and the execution order when it runs. Use it as a reference while reading the code, and as a checklist before an interview.</p>
+
+<h2>13.1 The repository at a glance</h2>
+
+<table class="tbl">
+  <caption>Table 13.1: Where everything lives</caption>
+  <thead><tr><th style="width:34%">Path</th><th style="width:66%">Responsibility</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">contracts/contracts/ProofPayUSD.sol</span></td><td>The pUSD ERC-20: standard token plus owner-only mint.</td></tr>
+    <tr><td><span class="mono">contracts/contracts/ProofPayEscrow.sol</span></td><td>Custody, order records, the two payout functions, oracle rotation.</td></tr>
+    <tr><td><span class="mono">contracts/contracts/ProofPayCREReceiver.sol</span></td><td>Report authorisation, decoding, replay and duplicate protection, outcome routing.</td></tr>
+    <tr><td><span class="mono">contracts/scripts/deploy.js</span>, <span class="mono">deploy-receiver.js</span>, <span class="mono">authorize-receiver.js</span></td><td>Deployment sequence and the two authorisation calls, with read-back verification.</td></tr>
+    <tr><td><span class="mono">contracts/deployments/cre-receiver-localhost.json</span></td><td>Deployment record: network, chain ID, addresses, forwarder, manual oracle, timestamp.</td></tr>
+    <tr><td><span class="mono">contracts/test/*.test.js</span></td><td>31 tests across the token, escrow and receiver.</td></tr>
+    <tr><td><span class="mono">frontend/src/store/useWallet.ts</span></td><td>EIP-1193 connection, chain check, account events, network switching.</td></tr>
+    <tr><td><span class="mono">frontend/src/store/useEscrows.ts</span></td><td>Discovers order IDs from logs, reads every escrow from storage, builds activity feed.</td></tr>
+    <tr><td><span class="mono">frontend/src/store/useEscrowActions.ts</span></td><td>Transaction sequencing for approve, create, and settlement; exposes <span class="mono">tx.phase</span>.</td></tr>
+    <tr><td><span class="mono">frontend/src/lib/contracts.ts</span>, <span class="mono">escrow.ts</span>, <span class="mono">wallet.ts</span>, <span class="mono">receiver.ts</span></td><td>Unit conversion, contract reads, address helpers, report encoding.</td></tr>
+    <tr><td><span class="mono">frontend/src/pages/*</span>, <span class="mono">components/admin/*</span></td><td>Buyer, seller, admin, checkout, order tracking, oracle panel, shipment simulator.</td></tr>
+    <tr><td><span class="mono">backend/src/app.js</span>, <span class="mono">routes/shipments.js</span>, <span class="mono">services/shipmentService.js</span>, <span class="mono">services/shipmentStore.js</span></td><td>Express app, routes, business rules, atomic JSON persistence.</td></tr>
+    <tr><td><span class="mono">backend/src/lib/validation.js</span>, <span class="mono">lib/errors.js</span>, <span class="mono">middleware/mutationAccess.js</span>, <span class="mono">services/escrowChain.js</span></td><td>Input normalisation, <span class="mono">ApiError</span>/<span class="mono">asyncHandler</span>, shared-secret guard, on-chain escrow verification.</td></tr>
+    <tr><td><span class="mono">chainlink/cre/project.yaml</span>, <span class="mono">workflow.yaml</span>, <span class="mono">shipment-workflow/*</span></td><td>CRE project, workflow, config, decision logic, report export, bridge, demo scheduler.</td></tr>
+  </tbody>
+</table>
+
+<h2>13.2 ProofPayUSD.sol</h2>
+
+<p><b>Purpose.</b> Define the unit of account. <b>Architecture.</b> Two OpenZeppelin bases and three members: constructor, <span class="mono">decimals</span>, <span class="mono">mint</span>. <b>Interactions.</b> Called by the escrow (<span class="mono">transferFrom</span>, <span class="mono">transfer</span>) and by the admin (mint); read by the frontend and the evidence scripts. <b>Flow.</b> Deploy → mint to admin → transfer to buyer/seller → approve escrow → escrow pulls funds → escrow pays out.</p>
+
+<p>Two details to be able to defend: decimals are explicit even though 18 is the default, and <span class="mono">mint</span> is the only privileged function. There is no burn, pause, blacklist or fee, so the escrow's "exact amount arrives" assumption always holds.</p>
+
+<h2>13.3 ProofPayEscrow.sol</h2>
+
+<p><b>Purpose.</b> Hold money and release it exactly once, to exactly one party, on the oracle's instruction. <b>Architecture.</b> One enum, one struct, one mapping, an immutable token, a mutable oracle, five external functions and two private helpers. <b>Interactions.</b> Reads the token; is called by buyers (fund) and by the receiver (settle); read by the frontend and by CRE.</p>
+
+<table class="tbl">
+  <caption>Table 13.2: Execution flow of each escrow entry point</caption>
+  <thead><tr><th style="width:22%">Entry point</th><th style="width:78%">Sequence</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">createEscrow</span></td><td>Guard reentrancy → validate orderId, buyer==sender, seller, distinctness, amount, uniqueness → write struct as Funded → <span class="mono">safeTransferFrom</span> → emit <span class="mono">EscrowCreated</span>.</td></tr>
+    <tr><td><span class="mono">confirmDelivery</span></td><td>Guard → <span class="mono">onlyOracle</span> → <span class="mono">_getFundedEscrow</span> → write Released and <span class="mono">settledAt</span> → <span class="mono">safeTransfer</span> to seller → emit <span class="mono">EscrowReleased</span>.</td></tr>
+    <tr><td><span class="mono">confirmFailure</span></td><td>Same shape, writes Refunded, transfers to buyer, emits <span class="mono">EscrowRefunded</span>.</td></tr>
+    <tr><td><span class="mono">getEscrow</span></td><td>Read struct; revert <span class="mono">EscrowNotFound</span> if status is None; return memory copy.</td></tr>
+    <tr><td><span class="mono">setOracle</span></td><td><span class="mono">onlyOwner</span> → reject zero → write → emit <span class="mono">OracleUpdated(previous, new)</span>.</td></tr>
+  </tbody>
+</table>
+
+<h2>13.4 ProofPayCREReceiver.sol</h2>
+
+<p><b>Purpose.</b> Turn an authorised report into exactly one settlement call. <b>Architecture.</b> Immutable escrow reference, two configurable authorised callers, two boolean mappings, two entry points that share one internal routine, and an ERC-165 advertisement. <b>Interactions.</b> Called by the forwarder (a DON) or the manual oracle (local/admin); calls the escrow's two settlement functions.</p>
+
+<pre class="code">// The essential shape, in five lines:
+decoded = abi.decode(report, (bytes32, string, bytes32, string));
+reportId = keccak256(abi.encodePacked(orderId, outcome, trackingIdHash, observedAt, metadata));
+require(!processedReports[reportId] &amp;&amp; !orderSettled[orderId]);
+require(escrowIsFunded(orderId));
+outcome == "DELIVERED" ? escrow.confirmDelivery(orderId) : escrow.confirmFailure(orderId);</pre>
+
+<p><b>Flow, in words.</b> Receive bytes → decode → build report ID → reject replay → reject duplicate order → verify funding via a self-call (so a missing escrow becomes a typed error) → hash the outcome string and branch → mark both mappings → emit two events. Anything unexpected reverts, and a revert changes nothing.</p>
+
+<h2>13.5 chainlink/cre/shipment-workflow/main.ts</h2>
+
+<p><b>Purpose.</b> Fetch shipments, verify escrows, decide, and produce a report — and nothing else. <b>Architecture.</b> One cron handler; a pure decision function; an HTTP fetch helper; an ABI-encoding helper; a payload-extraction helper; two structured log emissions. <b>Interactions.</b> Calls the Express API over HTTP, the escrow over EVM, and writes to stdout for the bridge.</p>
+
+<pre class="code">// Execution order inside onCronTrigger:
+1. runtime.config                       → typed staging configuration
+2. HTTPClient.sendRequest(consensusIdenticalAggregation)  → shipments JSON
+3. JSON.parse with array-or-{shipments} tolerance
+4. for each shipment:
+     shouldSettle(status) → NONE / MANUAL_REVIEW ? log &amp; continue
+     encodeFunctionData(getEscrow) → EVMClient.callContract(LAST_FINALIZED_BLOCK_NUMBER)
+     decodeFunctionResult → status !== 1 ? log &amp; continue
+     createReportPayload → prepareReportRequest → runtime.report
+     extractAbiPayload → verify slice decodes to (orderId, outcome)
+     log PROOFPAY_REPORT_V1 {type:"report"} and {type:"meta"}
+     if (config.dryRun) { log "DRY RUN"; continue; }
+     evmClient.writeReport(...)         // unreachable in this deployment</pre>
+
+<p>The two subtleties that mark this as real work rather than a tutorial: report generation is deliberately above the <span class="mono">dryRun</span> branch, and the payload extraction verifies which slice actually decodes rather than assuming a fixed 109-byte offset.</p>
+
+<h2>13.6 chainlink/cre/shipment-workflow/local-runner.ts</h2>
+
+<p><b>Purpose.</b> Relay CRE's report to the receiver, safely and exactly once. <b>Architecture.</b> Roughly 1,180 lines in nine sections: constants and ABIs; configuration; logging and retry helpers; simulation spawner and line consumer; validation; state and locking; chain context and preflight; escrow reads and transaction preparation; the main loop and summary. <b>Interactions.</b> Spawns the CRE CLI, reads the HTTP-served chain through viem, and sends one transaction per eligible report.</p>
+
+<table class="tbl">
+  <caption>Table 13.3: local-runner.ts by section, with the function to look for</caption>
+  <thead><tr><th style="width:30%">Section</th><th style="width:34%">Key symbols</th><th style="width:36%">What to read first</th></tr></thead>
+  <tbody>
+    <tr><td>Constants / ABIs</td><td><span class="mono">REPORT_LOG_PREFIX</span>, <span class="mono">SETTLEMENT_REPORT_ABI</span>, <span class="mono">RECEIVER_ABI</span>, <span class="mono">ESCROW_ABI</span></td><td>The error definitions are declared so reverts can be humanised.</td></tr>
+    <tr><td>Configuration</td><td><span class="mono">loadConfig</span>, <span class="mono">envFlag</span>, <span class="mono">parseOrderAllowlist</span></td><td><span class="mono">dryRun: envFlag("LOCAL_BRIDGE_DRY_RUN", true)</span> — the default that protects you.</td></tr>
+    <tr><td>Simulation</td><td><span class="mono">runCreSimulation</span>, <span class="mono">consumeLine</span></td><td>How stdout is split into report and meta records.</td></tr>
+    <tr><td>Validation</td><td><span class="mono">validateReport</span></td><td>The <span class="mono">creDryRun === false</span> refusal.</td></tr>
+    <tr><td>State / lock</td><td><span class="mono">loadState</span>, <span class="mono">saveState</span>, <span class="mono">acquireLock</span></td><td>Idempotency and single-instance guarantees.</td></tr>
+    <tr><td>Preflight</td><td><span class="mono">createClients</span>, <span class="mono">preflight</span></td><td>Six checks, each mapping to a real failure mode.</td></tr>
+    <tr><td>Execution</td><td><span class="mono">readEscrow</span>, <span class="mono">prepareTransaction</span>, <span class="mono">submitTransaction</span>, <span class="mono">processReport</span>, <span class="mono">main</span></td><td>The summary counters: submitted / planned / skipped / failed.</td></tr>
+  </tbody>
+</table>
+
+<h2>13.7 chainlink/cre/shipment-workflow/courier-scheduler.ts</h2>
+
+<p><b>Purpose.</b> Advance demo shipments on a timeline and optionally run CRE + bridge afterwards. <b>Architecture.</b> Config loader; <span class="mono">nextStatus</span>; due-checking with per-shipment delays; <span class="mono">patchStatus</span>; <span class="mono">runBridge</span>; a lock; a tick loop with idle-log suppression. <b>Interactions.</b> PATCHes the Express API; spawns the bridge. It never calls a contract.</p>
+
+<p>The two functions to know: <span class="mono">nextStatus(status, trackingId)</span> which encodes the timeline and the <span class="mono">-LOST</span> convention, and <span class="mono">tick(config)</span> which filters due shipments, applies updates sequentially, and runs the bridge only if something changed.</p>
+
+<h2>13.8 The shipment service (backend)</h2>
+
+<p><b>Purpose.</b> Be the authoritative off-chain record with strict transitions. <b>Architecture.</b> Router → service → store, with validation and errors as libraries. <b>Interactions.</b> The router is called by React and the scheduler; the service calls <span class="mono">escrowChain.verifyEscrow</span> over RPC; the store writes JSON.</p>
+
+<pre class="code">router.post('/', mutationAccess, asyncHandler(async (req, res) =&gt; {
+  const shipment = await shipmentService.register(req.body);
+  res.status(201).location(`/api/shipments/${shipment.trackingId}`).json(shipment);
+}));
+
+// service.register():
+normalizeCreateShipment(body) → assertNoDuplicates → verifyEscrow(orderId)
+→ 404 ESCROW_NOT_FOUND | 409 ESCROW_NOT_FUNDED | 409 SELLER_MISMATCH
+→ assertNoDuplicates again → build record with status CREATED + first event → store.add</pre>
+
+<p>Notice the deliberate double duplicate check around the async RPC call, and that the record's first event is created together with the record — there is no window in which a shipment exists without history.</p>
+
+<h2>13.9 The checkout page</h2>
+
+<p><b>Purpose.</b> Turn a product selection into a funded escrow with as few failure modes as possible. <b>Architecture.</b> Controlled form state; validation in <span class="mono">handleSubmit</span>; transaction sequencing delegated to <span class="mono">useEscrowActions</span>; presentation only otherwise. <b>Interactions.</b> Reads token balance and allowance; sends approve then createEscrow; calls <span class="mono">onCreated</span> to trigger re-reads.</p>
+
+<pre class="code">const busy = tx.phase === 'approving' || tx.phase === 'approved' || tx.phase === 'creating';
+// validation before any wallet prompt:
+if (!isValidAddress(sellerAddress)) next.seller = 'Enter a 0x address with 40 hex characters.';
+else if (sellerAddress.toLowerCase() === ZERO_ADDRESS) next.seller = 'The zero address cannot receive funds.';
+else if (sellerAddress.toLowerCase() === (wallet.address ?? '').toLowerCase())
+  next.seller = 'The seller cannot be your own wallet.';
+if (parsed.error) next.amount = parsed.error;</pre>
+
+<p>That block is worth quoting in an interview: it shows the UI enforcing the same invariants as the contract, before spending the user's time on a doomed signature. The contract still enforces them; the UI just fails fast.</p>
+
+<h2>13.10 The oracle panel (admin)</h2>
+
+<p><b>Purpose.</b> Prove the wiring and allow a manual, receiver-mediated settlement. <b>Architecture.</b> Two <span class="mono">useEffect</span> reads (<span class="mono">escrow.oracle()</span> and <span class="mono">receiver.manualOracle()</span>), derived booleans <span class="mono">receiverAuthorized</span> and <span class="mono">walletAuthorized</span>, and a submit path that encodes a report client-side. <b>Interactions.</b> Reads through EIP-1193 <span class="mono">eth_call</span>; writes <span class="mono">processReport</span> from the connected account.</p>
+
+<pre class="code">const receiverAuthorized = receiverDeployed &amp;&amp; escrowOracleState?.toLowerCase() === addr.toLowerCase();
+const walletAuthorized  = wallet.address?.toLowerCase() === receiverManualOracle?.toLowerCase();
+// Both must be true before the panel offers "Confirm delivery" / "Confirm failure".</pre>
+
+<p>This panel is the manual counterpart to the automated pipeline, and it is genuinely useful: it is how the receiver path was validated before CRE existed, and it remains the diagnostic tool when the automated path misbehaves.</p>
+
+<h2>13.11 lib/receiver.ts</h2>
+
+<p><b>Purpose.</b> Build a receiver call without any framework magic. <b>Architecture.</b> A minimal ABI (two entries), an environment reader, a mode flag, and one encoder. <b>Interactions.</b> Used by the oracle panel; mirrors the CRE payload exactly.</p>
+
+<p>The important line is the zero tracking hash: the manual path has no tracking record, so it passes <span class="mono">0x0…0</span>. The report ID remains unique because the order and timestamp differ. If asked why the manual path is weaker, this is the evidence: no tracking hash means no link to a courier record, which is precisely what the automated path provides.</p>
+
+<div class="box interview">
+  <span class="lbl">Interview checkpoint &mdash; Module 13</span>
+  <p><b>Q.</b> "Which file would you open first to understand the system?" <b>A.</b> <span class="mono">ProofPayEscrow.sol</span>, because it defines what money does; then <span class="mono">ProofPayCREReceiver.sol</span> for who may trigger it; then <span class="mono">main.ts</span> for how the decision is produced. The frontend and backend are consumers of those three.</p>
+</div>

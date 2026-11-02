@@ -1,0 +1,96 @@
+* { box-sizing: border-box; }
+body { font-family: "Times New Roman", Times, serif; font-size: 10.6pt; line-height: 1.46; color: #111827; margin: 0; }
+p { margin: 0 0 8pt 0; text-align: justify; hyphens: auto; }
+ul, ol { margin: 4pt 0 9pt 0; padding-left: 17pt; }
+li { margin-bottom: 4pt; text-align: justify; }
+b, strong { font-weight: 700; }
+i, em { font-style: italic; }
+
+h1.module { font-family: Helvetica, Arial, sans-serif; font-size: 20pt; font-weight: 700; color: #ffffff;
+  background: #0b2545; margin: 0 0 4pt 0; padding: 12pt 12pt 10pt 12pt; page-break-before: always;
+  page-break-after: avoid; letter-spacing: .2pt; }
+h1.module .mtag { display: block; font-size: 8.5pt; letter-spacing: 2.2pt; color: #9fc3e8; margin-bottom: 4pt; font-weight: 700; }
+h1.front { font-family: Helvetica, Arial, sans-serif; font-size: 16pt; font-weight: 700; color: #0b2545;
+  border-bottom: 1.6pt solid #0b2545; padding-bottom: 5pt; margin: 0 0 10pt 0; page-break-after: avoid; }
+h2 { font-family: Helvetica, Arial, sans-serif; font-size: 13pt; font-weight: 700; color: #123a63;
+  margin: 15pt 0 6pt 0; page-break-after: avoid; }
+h3 { font-family: Helvetica, Arial, sans-serif; font-size: 10.8pt; font-weight: 700; color: #1f4b7a;
+  margin: 11pt 0 4pt 0; page-break-after: avoid; }
+.mono { font-family: "Courier New", Courier, monospace; font-size: 9.2pt; word-break: break-word; }
+
+/* callouts */
+.box { border-left: 3pt solid #1d4ed8; background: #f2f7ff; padding: 7pt 9pt; margin: 8pt 0 10pt 0;
+  font-size: 9.9pt; page-break-inside: avoid; }
+.box .lbl { display: block; font-family: Helvetica, Arial, sans-serif; font-size: 8pt; font-weight: 700;
+  letter-spacing: 1.1pt; color: #1d4ed8; margin-bottom: 3pt; text-transform: uppercase; }
+.box.analogy { border-color: #0f766e; background: #f0fdfa; }
+.box.analogy .lbl { color: #0f766e; }
+.box.why { border-color: #15803d; background: #f2fbf4; }
+.box.why .lbl { color: #15803d; }
+.box.warn { border-color: #b45309; background: #fffbeb; }
+.box.warn .lbl { color: #b45309; }
+.box.interview { border-color: #6d28d9; background: #f7f3ff; }
+.box.interview .lbl { color: #6d28d9; }
+.box p:last-child, .box ul:last-child, .box ol:last-child { margin-bottom: 0; }
+
+/* code */
+.codefile { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; font-weight: 700; color: #123a63;
+  margin: 10pt 0 2.5pt 0; page-break-after: avoid; }
+pre.code { font-family: "Courier New", Courier, monospace; font-size: 7.9pt; line-height: 1.34;
+  background: #f7f9fc; border: .5pt solid #d7dee8; border-left: 2.6pt solid #123a63; padding: 6pt 8pt;
+  margin: 0 0 10pt 0; white-space: pre-wrap; word-break: break-word; page-break-inside: avoid; color: #0f172a; }
+pre.code .c { color: #64748b; }
+pre.code .k { color: #7c3aed; font-weight: 700; }
+
+/* tables */
+table.tbl { width: 100%; border-collapse: collapse; margin: 7pt 0 11pt 0; font-family: Helvetica, Arial, sans-serif;
+  font-size: 8.3pt; line-height: 1.33; page-break-inside: auto; }
+table.tbl caption { caption-side: top; text-align: left; font-family: Helvetica, Arial, sans-serif; font-size: 8.7pt;
+  font-weight: 700; color: #0b2545; padding-bottom: 4pt; }
+table.tbl th { background: #e6edf6; color: #0b2545; text-align: left; padding: 4.5pt 5pt;
+  border: .5pt solid #8fa6bd; vertical-align: bottom; }
+table.tbl td { padding: 4pt 5pt; border: .5pt solid #b8c6d5; vertical-align: top; }
+table.tbl tbody tr { page-break-inside: avoid; }
+table.tbl tbody tr:nth-child(even) { background: #f8fafc; }
+table.tbl thead { display: table-header-group; }
+table.tbl code, table.tbl .mono { font-size: 7.9pt; }
+
+/* figures */
+figure.fig { margin: 9pt 0 11pt 0; page-break-inside: avoid; text-align: center; }
+figure.fig img { max-width: 100%; max-height: 17.4cm; width: auto; height: auto; display: block; margin: 0 auto;
+  border: .5pt solid #cbd5e1; }
+figure.fig figcaption { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #334155;
+  margin-top: 5pt; }
+figure.fig figcaption b { color: #0b2545; }
+
+/* Q&A */
+.qa { margin: 0 0 9pt 0; page-break-inside: avoid; }
+.q { font-family: Helvetica, Arial, sans-serif; font-size: 9.6pt; font-weight: 700; color: #0b2545;
+  background: #eef3f9; padding: 4.5pt 7pt; margin: 0; border-left: 3pt solid #0b2545; }
+.a { padding: 4pt 7pt 0 9pt; font-size: 10.1pt; }
+.a p { margin: 0 0 5pt 0; }
+.qn { font-family: Helvetica, Arial, sans-serif; color: #b45309; font-weight: 700; }
+
+/* cover */
+.cover { page-break-after: always; padding-top: 20mm; text-align: center; }
+.cover .kicker { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; letter-spacing: 3pt; color: #475569; }
+.cover .rule { height: 2pt; background: #0b2545; margin: 8mm auto 7mm auto; }
+.cover h1 { font-family: Helvetica, Arial, sans-serif; font-size: 33pt; line-height: 1.14; color: #0b2545; margin: 0 0 6mm 0; }
+.cover .sub { font-size: 13pt; color: #334155; font-style: italic; margin: 0 0 10mm 0; }
+.cover .meta { font-family: Helvetica, Arial, sans-serif; font-size: 9.4pt; color: #334155; text-align: left; margin: 0 auto; width: 78%; }
+.cover .meta td { padding: 5pt 7pt; border-bottom: .5pt solid #cbd5e1; vertical-align: top; }
+.cover .meta td:first-child { width: 32%; color: #123a63; font-weight: 700; }
+.cover .foot { margin-top: 14mm; font-family: Helvetica, Arial, sans-serif; font-size: 8.4pt; color: #64748b; }
+
+/* toc */
+.toc-page { page-break-after: always; }
+table.toc { width: 100%; border-collapse: collapse; font-size: 9.2pt; }
+table.toc th { font-family: Helvetica, Arial, sans-serif; font-size: 8.6pt; text-align: left; color: #123a63;
+  border-bottom: 1pt solid #0b2545; padding: 3pt 0; }
+table.toc td { padding: 2.2pt 0; border-bottom: .4pt dotted #9aa8b8; vertical-align: bottom; }
+table.toc td.p, table.toc th.p { text-align: right; width: 10%; font-family: Helvetica, Arial, sans-serif; }
+table.toc tr.lvl2 td:first-child { padding-left: 10pt; }
+table.toc tr.lvl2 { font-size: 8.6pt; color: #334155; }
+
+.endnote { font-size: 8.5pt; color: #64748b; font-family: Helvetica, Arial, sans-serif; border-top: .5pt solid #cbd5e1;
+  padding-top: 5pt; margin-top: 10pt; }

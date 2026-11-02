@@ -1,0 +1,22 @@
+{
+  "name": "proofpay-shipment-settlement",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "main.ts",
+  "scripts": {
+    "postinstall": "bun x cre-setup",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "bridge": "bun local-runner.ts",
+    "bridge:live": "LOCAL_BRIDGE_DRY_RUN=false bun local-runner.ts",
+    "scheduler": "bun courier-scheduler.ts"
+  },
+  "dependencies": {
+    "@chainlink/cre-sdk": "^1.23.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
